@@ -1,0 +1,260 @@
+package rest
+
+import (
+	"time"
+	"strings"
+	"fmt"
+	"reflect"
+	"labix.org/v2/mgo"
+	"labix.org/v2/mgo/bson"
+)
+type ErrorCode uint
+
+//Same As HTTP Status
+const (
+	BadRequest		=	400
+	Unauthorized		=	401
+	NotFound		=	404
+	MethodNotAllowed	=	405
+	Conflict		=	409
+)
+
+func (es ErrorCode) String() string {
+	var ret string
+	switch es {
+	case BadRequest:
+		ret = "Bad Request"
+	case Unauthorized:
+		ret = "Unauthorized"
+	case NotFound:
+		ret = "Not Found"
+	case MethodNotAllowed:
+		ret = "Method Not Allowed"
+	case Conflict:
+		ret = "Conflict"
+	default:
+		panic(fmt.Sprintf("Invalid ErrorCode: %d", es))
+	}
+	return ret
+}
+
+type RESTError struct {
+	Code ErrorCode
+	Msg string
+	Err error
+	Fields map[string]string
+}
+
+func (re *RESTError) Error() string {
+	var ret string
+	if re.Msg != "" {
+		ret =  re.Msg
+	} else {
+		ret =  re.Code.String()
+	}
+	return ret
+}
+
+//被 rest 管理的 struct 必须包含 Base.
+type Base struct {
+	t string
+	id bson.ObjectId
+	ct time.Time
+	mt time.Time
+	rest REST
+	loaded bool
+}
+
+func (b *Base) Self() string {
+	return "/" + b.t + "/" + b.id.Hex()
+}
+
+func (b *Base) Load() error {
+	panic("Not Implements")
+}
+
+func (b *Base) R(name string, ctx *Context) Resource {
+	panic("Not Implements")
+}
+//地理位置
+type Geo struct {
+	Lo float64
+	La float64
+}
+
+type Method uint
+
+const (
+	GET Method = 1 << iota
+	PUT
+	DELETE
+	POST
+	PATCH
+)
+func methodParse(s string) (m Method, ok bool) {
+	switch {
+	case strings.EqualFold(s, "GET"):
+		m = GET
+		ok = true
+	case strings.EqualFold(s, "PUT"):
+		m = PUT
+		ok = true
+	case strings.EqualFold(s, "DELETE"):
+		m = DELETE
+		ok = true
+	case strings.EqualFold(s, "POST"):
+		m = POST
+		ok = true
+	case strings.EqualFold(s, "PATCH"):
+		m = PATCH
+		ok = true
+	default:
+		m = 0
+		ok = false
+	}
+	return
+}
+
+func (m Method) String() string {
+	var ret string
+	switch m {
+	case GET:
+		ret = "GET"
+	case PUT:
+		ret = "PUT"
+	case DELETE:
+		ret = "DELETE"
+	case POST:
+		ret = "POST"
+	case PATCH:
+		ret = "PATCH"
+	default:
+		panic(fmt.Sprintf("Invalid Method: %#x(%b)", m, m))
+	}
+	return ret
+}
+
+//Field Query
+//指定 SortFields 时不可以开启 Pull
+//Unique 为 true 时不支持 POST, 为 false 时不支持 PUT
+type FQ struct {
+	Type interface{}
+	Allow Method
+	//可以通过 ":" 引用 Context. 比如 "user:currentUser"
+	Fields []string
+	SortFields []string
+	Unique bool
+	Count bool
+	Limit uint
+	Pull bool
+}
+
+//Selector Query, 只支持 GET
+type SQ struct {
+	Type interface{}
+	SelectorFunc func(req *Req, ctx *Context) (selector map[string]interface{}, err error)
+	SortFields []string
+	Count bool
+	Limit uint
+}
+
+type Getable interface {
+	Get(req *Req, ctx *Context) (result interface{}, err error)
+}
+type Putable interface {
+	Put(req *Req, ctx *Context) (result interface{}, err error)
+}
+type Deletable interface {
+	Delete(req *Req, ctx *Context) (result interface{}, err error)
+}
+type Postable interface {
+	Post(req *Req, ctx *Context) (result interface{}, err error)
+}
+type Patchable interface {
+	Patch(req *Req, ctx *Context) (result interface{}, err error)
+}
+//Raw Query
+type RQ struct {
+	BodyType interface{}
+	ResultType interface{}
+	Handler interface{}
+}
+
+type Context struct {
+	Protected bool
+	val interface{}
+	newval bool
+}
+func (ctx *Context) Get()(val interface{}, ok bool) {
+	panic("Not Implements")
+}
+func (ctx *Context) Set(newval interface{}) {
+}
+type Req struct {
+	*URI
+	Method Method
+	Body interface{}
+	RawBody map[string]interface{}
+}
+
+type Resource interface {
+}
+type REST interface {
+	FieldQuery(name string, fq FQ)
+	SelectorQuery(name string, sq SQ)
+	RawQuery(name string, rq RQ)
+	R(nameOrURI string, ctx *Context, params ...interface{}) Resource
+}
+func NewREST(s *mgo.Session, db string) REST {
+	return &rest{s, db, make(map[string]reflect.Type), make(map[string]interface{})}
+}
+type rest struct {
+	s *mgo.Session
+	db string
+	types map[string]reflect.Type
+	queries map[string]interface{}
+}
+func (r *rest) registerType(t interface{}) {
+	typ := reflect.TypeOf(t)
+	if typ.Kind() != reflect.Struct {
+		panic("only struct type allowed")
+	}
+	name := strings.ToLower(typ.Name())
+	if told, ok := r.types[name]; ok {
+		if typ != told {
+			f := "type of '%s' must be %v"
+			panic(fmt.Sprintln(f, name, told))
+		}
+	} else {
+		r.types[name] = typ
+	}
+}
+func (r *rest) registerQuery(name string, q interface{}) {
+	checkQueryName(name)
+	if _, ok := r.queries[name]; ok {
+		panic(fmt.Sprintln("query '%s' already defined", name))
+	}
+	switch t := q.(type) {
+	case FQ, SQ, RQ:
+		r.queries[name] = q
+	default:
+		panic(fmt.Sprintln("unknown query type: %v", t))
+	}
+}
+func (r *rest) FieldQuery(name string, fq FQ) {
+	r.registerType(fq.Type)
+	r.registerQuery(name, fq)
+}
+func (r *rest) SelectorQuery(name string, sq SQ) {
+	r.registerType(sq.Type)
+	r.registerQuery(name, sq)
+}
+func (r *rest) RawQuery(name string, rq RQ) {
+	r.registerType(rq.BodyType)
+	r.registerType(rq.ResultType)
+	r.registerQuery(name, rq)
+}
+func (r *rest) R(nameOrURI string, ctx *Context, params ...interface{}) Resource {
+	panic("Not Implement")
+}
+

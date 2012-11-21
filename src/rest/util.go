@@ -33,7 +33,7 @@ type URI  struct {
 	Path []string
 	QueryParams map[string]string
 }
-func URLParse(s string) (uri *URI, err error) {
+func URIParse(s string) (uri *URI, err error) {
 	url, err := url.Parse(s)
 	if err != nil {
 		return nil, err

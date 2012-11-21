@@ -59,14 +59,14 @@ func TestParseURL1(t *testing.T) {
 		"/hello?q=abc",
 	}
 	for _, tc := range testCase {
-		_, err := URLParse(tc)
+		_, err := URIParse(tc)
 		if err != nil {
 			t.Errorf("url: %s, err: %v", tc, err)
 		}
 	}
 }
 func TestParseURL2(t *testing.T) {
-	uri, err := URLParse("/%E5%88%98%E5%85%B8?a=1&b=2")
+	uri, err := URIParse("/%E5%88%98%E5%85%B8?a=1&b=2")
 	if err != nil || len(uri.Path) !=1 || uri.Path[0] != "刘典"  {
 		t.Errorf("uri: %v, err: %v", uri, err)
 	}
@@ -76,13 +76,13 @@ func TestParseURL2(t *testing.T) {
 	}
 }
 func TestParseURL3(t *testing.T) {
-	uri, err := URLParse("/")
+	uri, err := URIParse("/")
 	if err != nil || len(uri.Path) !=1 || uri.Path[0] != ""  {
 		t.Errorf("uri: %v, err: %v", uri, err)
 	}
 }
 func TestParseURL4(t *testing.T) {
-	_, err := URLParse("%E5%88%98%E5%85%B8?a=1&b=2")
+	_, err := URIParse("%E5%88%98%E5%85%B8?a=1&b=2")
 	if err == nil {
 		t.Fail()
 	}

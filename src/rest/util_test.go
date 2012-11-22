@@ -3,6 +3,7 @@ package rest
 import (
 	"fmt"
 	"testing"
+	"net/url"
 )
 
 func TestIsQueryName1(t *testing.T) {
@@ -37,6 +38,20 @@ func TestIsQueryName2(t *testing.T) {
 		if ok {
 			t.Error(tc)
 		}
+	}
+}
+func TestIsSysQueryName(t *testing.T) {
+	ok := isSysQueryName("")
+	if ok {
+		t.Fail()
+	}
+	ok = isSysQueryName("-abc-123")
+	if !ok {
+		t.Fail()
+	}
+	ok = isSysQueryName("abc-123")
+	if ok {
+		t.Fail()
 	}
 }
 
@@ -87,3 +102,17 @@ func TestParseURL4(t *testing.T) {
 		t.Fail()
 	}
 }
+
+func ExampleURI1() {
+	uri := &URI{[]string{"你好", "hello"}, map[string]string{"a":"1"}}
+	fmt.Println(uri.String())
+	//Output:/%E4%BD%A0%E5%A5%BD/hello?a=1
+}
+
+func ExampleURI2() {
+	u, _ := url.Parse("http://www.liudian.com/a/b")
+	uri := &URI{[]string{"你好", "hello"}, map[string]string{"a":"1"}}
+	fmt.Println(uri.URLWithBase(u))
+	//Output:http://www.liudian.com/%E4%BD%A0%E5%A5%BD/hello?a=1
+}
+

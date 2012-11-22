@@ -13,6 +13,7 @@ type ErrorCode uint
 //Same As HTTP Status
 const (
 	BadRequest		=	400
+	Forbidden		=	403
 	Unauthorized		=	401
 	NotFound		=	404
 	MethodNotAllowed	=	405
@@ -26,6 +27,8 @@ func (es ErrorCode) String() string {
 		ret = "Bad Request"
 	case Unauthorized:
 		ret = "Unauthorized"
+	case Forbidden:
+		ret = "Forbidden"
 	case NotFound:
 		ret = "Not Found"
 	case MethodNotAllowed:
@@ -181,7 +184,7 @@ type RQ struct {
 }
 
 type Context struct {
-	Protected bool
+	Sys bool
 	val interface{}
 	newval bool
 }
@@ -203,7 +206,7 @@ type REST interface {
 	FieldQuery(name string, fq FQ)
 	SelectorQuery(name string, sq SQ)
 	RawQuery(name string, rq RQ)
-	R(nameOrURI string, ctx *Context, params ...interface{}) Resource
+	R(uri *URI, ctx *Context) (res Resource, err error)
 }
 func NewREST(s *mgo.Session, db string) REST {
 	return &rest{s, db, make(map[string]reflect.Type), make(map[string]interface{})}
@@ -254,7 +257,25 @@ func (r *rest) RawQuery(name string, rq RQ) {
 	r.registerType(rq.ResultType)
 	r.registerQuery(name, rq)
 }
-func (r *rest) R(nameOrURI string, ctx *Context, params ...interface{}) Resource {
+func (r *rest) typeRes(t reflect.Type, uri *URI, ctx *Context) (res Resource, err error) {
 	panic("Not Implement")
 }
+
+func (r *rest) queryRes(query interface{}, uri *URI, ctx *Context) (res Resource, err error) {
+	panic("Not Implement")
+}
+func (r *rest) R(uri *URI, ctx *Context) (res Resource, err error) {
+	name := uri.Path[0]
+	if typ, ok := r.types[name]; ok {
+		return r.typeRes(typ, uri, ctx)
+	}
+	if qry, ok := r.queries[name]; ok {
+		if isSysQueryName(name) && !ctx.Sys {
+			return nil, &RESTError{Code: Forbidden, Msg: uri.String()}
+		}
+		return r.queryRes(qry, uri, ctx)
+	}
+	return nil, &RESTError{Code: NotFound, Msg: uri.String()}
+}
+
 

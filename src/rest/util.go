@@ -28,10 +28,31 @@ func checkQueryName(s string) {
 		panic(fmt.Sprintf("'%s' not a valid query name", s))
 	}
 }
-
+func isSysQueryName(qn string) bool {
+	return qn != "" && qn[0] == '-';
+}
 type URI  struct {
 	Path []string
 	QueryParams map[string]string
+}
+func (uri *URI) URLWithBase(base *url.URL) *url.URL {
+	u := uri.url()
+	u.Scheme = base.Scheme
+	u.Host = base.Host
+	return u
+}
+func (uri *URI) url() *url.URL {
+	var u url.URL
+	u.Path = "/" + strings.Join(uri.Path, "/")
+	vals := make(url.Values)
+	for k, v := range uri.QueryParams {
+		vals.Add(k, v)
+	}
+	u.RawQuery = vals.Encode()
+	return &u
+}
+func (uri *URI) String() string {
+	return uri.url().String()
 }
 func URIParse(s string) (uri *URI, err error) {
 	url, err := url.Parse(s)

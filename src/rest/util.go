@@ -2,8 +2,8 @@ package rest
 
 import (
 	"fmt"
-	"regexp"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -29,12 +29,14 @@ func checkQueryName(s string) {
 	}
 }
 func isSysQueryName(qn string) bool {
-	return qn != "" && qn[0] == '-';
+	return qn != "" && qn[0] == '-'
 }
-type URI  struct {
-	Path []string
+
+type URI struct {
+	Path        []string
 	QueryParams map[string]string
 }
+
 func (uri *URI) URLWithBase(base *url.URL) *url.URL {
 	u := uri.url()
 	u.Scheme = base.Scheme

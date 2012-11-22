@@ -1,23 +1,24 @@
 package rest
 
 import (
-	"time"
-	"strings"
 	"fmt"
-	"reflect"
 	"labix.org/v2/mgo"
 	"labix.org/v2/mgo/bson"
+	"reflect"
+	"strings"
+	"time"
 )
+
 type ErrorCode uint
 
 //Same As HTTP Status
 const (
-	BadRequest		=	400
-	Forbidden		=	403
-	Unauthorized		=	401
-	NotFound		=	404
-	MethodNotAllowed	=	405
-	Conflict		=	409
+	BadRequest       = 400
+	Forbidden        = 403
+	Unauthorized     = 401
+	NotFound         = 404
+	MethodNotAllowed = 405
+	Conflict         = 409
 )
 
 func (es ErrorCode) String() string {
@@ -42,29 +43,29 @@ func (es ErrorCode) String() string {
 }
 
 type RESTError struct {
-	Code ErrorCode
-	Msg string
-	Err error
+	Code   ErrorCode
+	Msg    string
+	Err    error
 	Fields map[string]string
 }
 
 func (re *RESTError) Error() string {
 	var ret string
 	if re.Msg != "" {
-		ret =  re.Msg
+		ret = re.Msg
 	} else {
-		ret =  re.Code.String()
+		ret = re.Code.String()
 	}
 	return ret
 }
 
 //被 rest 管理的 struct 必须包含 Base.
 type Base struct {
-	t string
-	id bson.ObjectId
-	ct time.Time
-	mt time.Time
-	rest REST
+	t      string
+	id     bson.ObjectId
+	ct     time.Time
+	mt     time.Time
+	rest   REST
 	loaded bool
 }
 
@@ -79,6 +80,7 @@ func (b *Base) Load() error {
 func (b *Base) R(name string, ctx *Context) Resource {
 	panic("Not Implements")
 }
+
 //地理位置
 type Geo struct {
 	Lo float64
@@ -94,6 +96,7 @@ const (
 	POST
 	PATCH
 )
+
 func methodParse(s string) (m Method, ok bool) {
 	switch {
 	case strings.EqualFold(s, "GET"):
@@ -141,24 +144,24 @@ func (m Method) String() string {
 //指定 SortFields 时不可以开启 Pull
 //Unique 为 true 时不支持 POST, 为 false 时不支持 PUT
 type FQ struct {
-	Type interface{}
+	Type  interface{}
 	Allow Method
 	//可以通过 ":" 引用 Context. 比如 "user:currentUser"
-	Fields []string
+	Fields     []string
 	SortFields []string
-	Unique bool
-	Count bool
-	Limit uint
-	Pull bool
+	Unique     bool
+	Count      bool
+	Limit      uint
+	Pull       bool
 }
 
 //Selector Query, 只支持 GET
 type SQ struct {
-	Type interface{}
+	Type         interface{}
 	SelectorFunc func(req *Req, ctx *Context) (selector map[string]interface{}, err error)
-	SortFields []string
-	Count bool
-	Limit uint
+	SortFields   []string
+	Count        bool
+	Limit        uint
 }
 
 type Getable interface {
@@ -176,27 +179,30 @@ type Postable interface {
 type Patchable interface {
 	Patch(req *Req, ctx *Context) (result interface{}, err error)
 }
+
 //Raw Query
 type RQ struct {
-	BodyType interface{}
+	BodyType   interface{}
 	ResultType interface{}
-	Handler interface{}
+	Handler    interface{}
 }
 
 type Context struct {
-	Sys bool
-	val interface{}
+	Sys    bool
+	val    interface{}
 	newval bool
 }
-func (ctx *Context) Get()(val interface{}, ok bool) {
+
+func (ctx *Context) Get() (val interface{}, ok bool) {
 	panic("Not Implements")
 }
 func (ctx *Context) Set(newval interface{}) {
 }
+
 type Req struct {
 	*URI
-	Method Method
-	Body interface{}
+	Method  Method
+	Body    interface{}
 	RawBody map[string]interface{}
 }
 
@@ -208,15 +214,18 @@ type REST interface {
 	RawQuery(name string, rq RQ)
 	R(uri *URI, ctx *Context) (res Resource, err error)
 }
+
 func NewREST(s *mgo.Session, db string) REST {
 	return &rest{s, db, make(map[string]reflect.Type), make(map[string]interface{})}
 }
+
 type rest struct {
-	s *mgo.Session
-	db string
-	types map[string]reflect.Type
+	s       *mgo.Session
+	db      string
+	types   map[string]reflect.Type
 	queries map[string]interface{}
 }
+
 func (r *rest) registerType(t interface{}) {
 	typ := reflect.TypeOf(t)
 	if typ.Kind() != reflect.Struct {
@@ -277,5 +286,3 @@ func (r *rest) R(uri *URI, ctx *Context) (res Resource, err error) {
 	}
 	return nil, &RESTError{Code: NotFound, Msg: uri.String()}
 }
-
-

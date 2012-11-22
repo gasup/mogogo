@@ -2,12 +2,12 @@ package rest
 
 import (
 	"fmt"
-	"testing"
 	"net/url"
+	"testing"
 )
 
 func TestIsQueryName1(t *testing.T) {
-	testCase := []string {
+	testCase := []string{
 		"",
 		"abc",
 		"a-b-c",
@@ -25,7 +25,7 @@ func TestIsQueryName1(t *testing.T) {
 }
 
 func TestIsQueryName2(t *testing.T) {
-	testCase := []string {
+	testCase := []string{
 		"-",
 		"a-b-",
 		"aa--bb",
@@ -66,7 +66,7 @@ func ExampleCheckQueryName() {
 }
 
 func TestParseURL1(t *testing.T) {
-	testCase := []string {
+	testCase := []string{
 		"https://www.google.com/%E5%88%98%E5%85%B8/%E5%88%98%E5%85%B8?q=%E5%88%98%E5%85%B8",
 		"/%E5%88%98%E5%85%B8",
 		"http://www.abc.com/?q=abc",
@@ -82,7 +82,7 @@ func TestParseURL1(t *testing.T) {
 }
 func TestParseURL2(t *testing.T) {
 	uri, err := URIParse("/%E5%88%98%E5%85%B8?a=1&b=2")
-	if err != nil || len(uri.Path) !=1 || uri.Path[0] != "刘典"  {
+	if err != nil || len(uri.Path) != 1 || uri.Path[0] != "刘典" {
 		t.Errorf("uri: %v, err: %v", uri, err)
 	}
 	params := uri.QueryParams
@@ -92,7 +92,7 @@ func TestParseURL2(t *testing.T) {
 }
 func TestParseURL3(t *testing.T) {
 	uri, err := URIParse("/")
-	if err != nil || len(uri.Path) !=1 || uri.Path[0] != ""  {
+	if err != nil || len(uri.Path) != 1 || uri.Path[0] != "" {
 		t.Errorf("uri: %v, err: %v", uri, err)
 	}
 }
@@ -104,15 +104,14 @@ func TestParseURL4(t *testing.T) {
 }
 
 func ExampleURI1() {
-	uri := &URI{[]string{"你好", "hello"}, map[string]string{"a":"1"}}
+	uri := &URI{[]string{"你好", "hello"}, map[string]string{"a": "1"}}
 	fmt.Println(uri.String())
 	//Output:/%E4%BD%A0%E5%A5%BD/hello?a=1
 }
 
 func ExampleURI2() {
 	u, _ := url.Parse("http://www.liudian.com/a/b")
-	uri := &URI{[]string{"你好", "hello"}, map[string]string{"a":"1"}}
+	uri := &URI{[]string{"你好", "hello"}, map[string]string{"a": "1"}}
 	fmt.Println(uri.URLWithBase(u))
 	//Output:http://www.liudian.com/%E4%BD%A0%E5%A5%BD/hello?a=1
 }
-

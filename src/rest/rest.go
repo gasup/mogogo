@@ -157,7 +157,8 @@ type FQ struct {
 
 //Selector Query, 只支持 GET
 type SQ struct {
-	Type         interface{}
+	BodyType     interface{}
+	ResultType   interface{}
 	SelectorFunc func(req *Req, ctx *Context) (selector map[string]interface{}, err error)
 	SortFields   []string
 	Count        bool
@@ -180,8 +181,8 @@ type Patchable interface {
 	Patch(req *Req, ctx *Context) (result interface{}, err error)
 }
 
-//Raw Query
-type RQ struct {
+//Custom Query
+type CQ struct {
 	BodyType   interface{}
 	ResultType interface{}
 	Handler    interface{}
@@ -205,14 +206,43 @@ type Req struct {
 	Body    interface{}
 	RawBody map[string]interface{}
 }
-
-type Resource interface {
+type Iter interface {
+	CanCursor() bool
+	Cursor() *URI
+	Next() (result interface{}, err error)
 }
+type Slice interface {
+	Prev() *URI
+	Next() *URI
+	HasCount() bool
+	Count() int
+	HasLimit()
+	Limit() int
+	Items() interface{}
+}
+type Resource interface {
+	Get() Iter
+	GetSlice() (slice Slice, err error)
+	GetOne() (result interface{}, err error)
+	Put(body interface{}) (result interface{}, err error)
+	Delete() (err error)
+	Post(body interface{}) (result interface{}, err error)
+	Patch(body interface{}) (result interface{}, err error)
+}
+
 type REST interface {
 	FieldQuery(name string, fq FQ)
 	SelectorQuery(name string, sq SQ)
-	RawQuery(name string, rq RQ)
+	CustomQuery(name string, cq CQ)
+	Index(typ interface{}, index Index)
 	R(uri *URI, ctx *Context) (res Resource, err error)
+}
+
+type Index struct {
+	Key         []string
+	Unique      bool
+	Sparse      bool
+	ExpireAfter time.Duration
 }
 
 func NewREST(s *mgo.Session, db string) REST {
@@ -241,13 +271,22 @@ func (r *rest) registerType(t interface{}) {
 		r.types[name] = typ
 	}
 }
+
+func (r *rest) typeName(typ interface{}) string {
+	t := reflect.TypeOf(typ)
+	name := strings.ToLower(t.Name())
+	if _, ok := r.types[name]; !ok {
+		panic(fmt.Sprintf("type '%v' not register", t))
+	}
+	return name
+}
 func (r *rest) registerQuery(name string, q interface{}) {
 	checkQueryName(name)
 	if _, ok := r.queries[name]; ok {
 		panic(fmt.Sprintln("query '%s' already defined", name))
 	}
 	switch t := q.(type) {
-	case FQ, SQ, RQ:
+	case FQ, SQ, CQ:
 		r.queries[name] = q
 	default:
 		panic(fmt.Sprintln("unknown query type: %v", t))
@@ -258,13 +297,28 @@ func (r *rest) FieldQuery(name string, fq FQ) {
 	r.registerQuery(name, fq)
 }
 func (r *rest) SelectorQuery(name string, sq SQ) {
-	r.registerType(sq.Type)
+	r.registerType(sq.BodyType)
+	r.registerType(sq.ResultType)
 	r.registerQuery(name, sq)
 }
-func (r *rest) RawQuery(name string, rq RQ) {
-	r.registerType(rq.BodyType)
-	r.registerType(rq.ResultType)
-	r.registerQuery(name, rq)
+func (r *rest) CustomQuery(name string, cq CQ) {
+	r.registerType(cq.BodyType)
+	r.registerType(cq.ResultType)
+	r.registerQuery(name, cq)
+}
+func (r *rest) Index(typ interface{}, index Index) {
+	r.registerType(typ)
+	c := r.s.DB(r.db).C(r.typeName(typ))
+	mgoidx := mgo.Index{
+		Key:         index.Key,
+		Unique:      index.Unique,
+		Sparse:      index.Sparse,
+		ExpireAfter: index.ExpireAfter,
+	}
+	err := c.EnsureIndex(mgoidx)
+	if err != nil {
+		panic(err)
+	}
 }
 func (r *rest) typeRes(t reflect.Type, uri *URI, ctx *Context) (res Resource, err error) {
 	panic("Not Implement")

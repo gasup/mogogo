@@ -157,8 +157,8 @@ type FieldQuery struct {
 
 //Selector Query, 只支持 GET
 type SelectorQuery struct {
-	BodyType   interface{}
-	ResultType interface{}
+	BodyType     interface{}
+	ResultType   interface{}
 	SelectorFunc func(req *Req, ctx *Context) (selector map[string]interface{}, err error)
 	SortFields   []string
 	Count        bool
@@ -224,10 +224,10 @@ type Resource interface {
 	Get() Iter
 	GetSlice() (slice Slice, err error)
 	GetOne() (result interface{}, err error)
-	Put(body interface{}) (result interface{} , err error)
+	Put(body interface{}) (result interface{}, err error)
 	Delete() (err error)
-	Post(body interface{}) (result interface{} , err error)
-	Patch(body interface{}) (result interface{} , err error)
+	Post(body interface{}) (result interface{}, err error)
+	Patch(body interface{}) (result interface{}, err error)
 }
 
 type REST interface {
@@ -237,9 +237,9 @@ type REST interface {
 }
 
 type I struct {
-	Key        []string
-	Unique     bool
-	Sparse     bool
+	Key         []string
+	Unique      bool
+	Sparse      bool
 	ExpireAfter time.Duration
 }
 
@@ -253,6 +253,7 @@ type rest struct {
 	types   map[string]reflect.Type
 	queries map[string]interface{}
 }
+
 func (r *rest) registerType(t interface{}) {
 	typ := reflect.TypeOf(t)
 	if typ.Kind() != reflect.Struct {
@@ -269,7 +270,7 @@ func (r *rest) registerType(t interface{}) {
 	}
 }
 
-func (r *rest) typeName(typ interface{}) string{
+func (r *rest) typeName(typ interface{}) string {
 	t := reflect.TypeOf(typ)
 	name := strings.ToLower(t.Name())
 	if _, ok := r.types[name]; !ok {
@@ -319,11 +320,11 @@ func (r *rest) defCustomQuery(name string, cq CustomQuery) {
 func (r *rest) Index(typ interface{}, index I) {
 	r.registerType(typ)
 	c := r.s.DB(r.db).C(r.typeName(typ))
-	mgoidx := mgo.Index {
-		Key:	index.Key,
-		Unique:	index.Unique,
-		Sparse:	index.Sparse,
-		ExpireAfter:	index.ExpireAfter,
+	mgoidx := mgo.Index{
+		Key:         index.Key,
+		Unique:      index.Unique,
+		Sparse:      index.Sparse,
+		ExpireAfter: index.ExpireAfter,
 	}
 	err := c.EnsureIndex(mgoidx)
 	if err != nil {

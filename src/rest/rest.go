@@ -143,7 +143,7 @@ func (m Method) String() string {
 //Field Query
 //指定 SortFields 时不可以开启 Pull
 //Unique 为 true 时不支持 POST, 为 false 时不支持 PUT
-type FQ struct {
+type FieldQuery struct {
 	Type  interface{}
 	Allow Method
 	//可以通过 ":" 引用 Context. 比如 "user:currentUser"
@@ -156,7 +156,7 @@ type FQ struct {
 }
 
 //Selector Query, 只支持 GET
-type SQ struct {
+type SelectorQuery struct {
 	BodyType     interface{}
 	ResultType   interface{}
 	SelectorFunc func(req *Req, ctx *Context) (selector map[string]interface{}, err error)
@@ -182,7 +182,7 @@ type Patchable interface {
 }
 
 //Custom Query
-type CQ struct {
+type CustomQuery struct {
 	BodyType   interface{}
 	ResultType interface{}
 	Handler    interface{}
@@ -231,9 +231,7 @@ type Resource interface {
 }
 
 type REST interface {
-	FieldQuery(name string, fq FQ)
-	SelectorQuery(name string, sq SQ)
-	CustomQuery(name string, cq CQ)
+	Def(name string, def interface{})
 	Index(typ interface{}, index Index)
 	R(uri *URI, ctx *Context) (res Resource, err error)
 }
@@ -285,23 +283,36 @@ func (r *rest) registerQuery(name string, q interface{}) {
 	if _, ok := r.queries[name]; ok {
 		panic(fmt.Sprintln("query '%s' already defined", name))
 	}
-	switch t := q.(type) {
-	case FQ, SQ, CQ:
+	switch q.(type) {
+	case FieldQuery, SelectorQuery, CustomQuery:
 		r.queries[name] = q
 	default:
-		panic(fmt.Sprintln("unknown query type: %v", t))
+		panic(fmt.Sprintln("unknown query type: %v", reflect.TypeOf(q)))
 	}
 }
-func (r *rest) FieldQuery(name string, fq FQ) {
+func (r *rest) Def(name string, def interface{}) {
+	switch q := def.(type) {
+	case FieldQuery:
+		r.defFieldQuery(name, q)
+	case SelectorQuery:
+		r.defSelectorQuery(name, q)
+	case CustomQuery:
+		r.defCustomQuery(name, q)
+	default:
+		panic(fmt.Sprintln("unknown query type: %v", reflect.TypeOf(def)))
+	}
+}
+
+func (r *rest) defFieldQuery(name string, fq FieldQuery) {
 	r.registerType(fq.Type)
 	r.registerQuery(name, fq)
 }
-func (r *rest) SelectorQuery(name string, sq SQ) {
+func (r *rest) defSelectorQuery(name string, sq SelectorQuery) {
 	r.registerType(sq.BodyType)
 	r.registerType(sq.ResultType)
 	r.registerQuery(name, sq)
 }
-func (r *rest) CustomQuery(name string, cq CQ) {
+func (r *rest) defCustomQuery(name string, cq CustomQuery) {
 	r.registerType(cq.BodyType)
 	r.registerType(cq.ResultType)
 	r.registerQuery(name, cq)

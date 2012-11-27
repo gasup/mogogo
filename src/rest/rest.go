@@ -232,11 +232,11 @@ type Resource interface {
 
 type REST interface {
 	Def(name string, def interface{})
-	Index(typ interface{}, index Index)
+	Index(typ interface{}, index I)
 	R(uri *URI, ctx *Context) (res Resource, err error)
 }
 
-type Index struct {
+type I struct {
 	Key         []string
 	Unique      bool
 	Sparse      bool
@@ -317,7 +317,7 @@ func (r *rest) defCustomQuery(name string, cq CustomQuery) {
 	r.registerType(cq.ResultType)
 	r.registerQuery(name, cq)
 }
-func (r *rest) Index(typ interface{}, index Index) {
+func (r *rest) Index(typ interface{}, index I) {
 	r.registerType(typ)
 	c := r.s.DB(r.db).C(r.typeName(typ))
 	mgoidx := mgo.Index{

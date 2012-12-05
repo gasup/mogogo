@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -27,6 +28,13 @@ func checkQueryName(s string) {
 	if !isQueryName(s) {
 		panic(fmt.Sprintf("'%s' not a valid query name", s))
 	}
+}
+func typeNameToQueryName(typ string) string {
+	ret := strings.ToLower(typ)
+	if unicode.IsLower(rune(typ[0])) {
+		ret = "-" + ret
+	}
+	return ret
 }
 func isSysQueryName(qn string) bool {
 	return qn != "" && qn[0] == '-'

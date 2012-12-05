@@ -69,8 +69,10 @@ type Base struct {
 	loaded bool
 }
 
+var baseType reflect.Type = reflect.TypeOf(Base{})
+
 func (b *Base) Self() string {
-	return "/" + b.t + "/" + b.id.Hex()
+	return "/" + typeNameToQueryName(b.t) + "/" + b.id.Hex()
 }
 
 func (b *Base) Load() error {
@@ -144,7 +146,7 @@ func (m Method) String() string {
 //指定 SortFields 时不可以开启 Pull
 //Unique 为 true 时不支持 POST, 为 false 时不支持 PUT
 type FieldQuery struct {
-	Type  interface{}
+	Type  string
 	Allow Method
 	//可以通过 ":" 引用 Context. 比如 "user:currentUser"
 	Fields     []string
@@ -157,8 +159,8 @@ type FieldQuery struct {
 
 //Selector Query, 只支持 GET
 type SelectorQuery struct {
-	BodyType     interface{}
-	ResultType   interface{}
+	BodyType     string
+	ResultType   string
 	SelectorFunc func(req *Req, ctx *Context) (selector map[string]interface{}, err error)
 	SortFields   []string
 	Count        bool
@@ -183,33 +185,30 @@ type Patchable interface {
 
 //Custom Query
 type CustomQuery struct {
-	BodyType   interface{}
-	ResultType interface{}
+	BodyType   string
+	ResultType string
+	ElemType   []string
 	Handler    interface{}
 }
 
 type Context struct {
 	Sys    bool
-	val    interface{}
+	values map[string]interface{}
 	newval bool
 }
 
-func (ctx *Context) Get() (val interface{}, ok bool) {
+func (ctx *Context) Get(key string) (val interface{}, ok bool) {
 	panic("Not Implements")
 }
-func (ctx *Context) Set(newval interface{}) {
+func (ctx *Context) Set(key string, val interface{}) {
+	panic("Not Implements")
 }
 
 type Req struct {
 	*URI
 	Method  Method
 	Body    interface{}
-	RawBody map[string]interface{}
-}
-type Iter interface {
-	CanCursor() bool
-	Cursor() *URI
-	Next() (result interface{}, err error)
+	RawBody interface{}
 }
 type Slice interface {
 	Prev() *URI
@@ -220,10 +219,14 @@ type Slice interface {
 	Limit() int
 	Items() interface{}
 }
+type Iter interface {
+	CanCursor() bool
+	Cursor() *URI
+	Next() (result interface{}, err error)
+	Slice() (slice Slice, err error)
+}
 type Resource interface {
-	Get() Iter
-	GetSlice() (slice Slice, err error)
-	GetOne() (result interface{}, err error)
+	Get() (result interface{}, err error)
 	Put(body interface{}) (result interface{}, err error)
 	Delete() (err error)
 	Post(body interface{}) (result interface{}, err error)
@@ -231,8 +234,10 @@ type Resource interface {
 }
 
 type REST interface {
+	DefType(def interface{})
 	Def(name string, def interface{})
-	Index(typ interface{}, index I)
+	Bind(name string, typ string, query string, fields []string, ctxref map[string]string)
+	Index(typ string, index I)
 	R(uri *URI, ctx *Context) (res Resource, err error)
 }
 
@@ -244,7 +249,13 @@ type I struct {
 }
 
 func NewREST(s *mgo.Session, db string) REST {
-	return &rest{s, db, make(map[string]reflect.Type), make(map[string]interface{})}
+	return &rest{
+		s,
+		db,
+		make(map[string]reflect.Type),
+		make(map[string]interface{}),
+		make(map[string]map[string]bind),
+	}
 }
 
 type rest struct {
@@ -252,31 +263,30 @@ type rest struct {
 	db      string
 	types   map[string]reflect.Type
 	queries map[string]interface{}
+	binds   map[string]map[string]bind
 }
 
-func (r *rest) registerType(t interface{}) {
-	typ := reflect.TypeOf(t)
-	if typ.Kind() != reflect.Struct {
-		panic("only struct type allowed")
-	}
-	name := strings.ToLower(typ.Name())
-	if told, ok := r.types[name]; ok {
-		if typ != told {
-			f := "type of '%s' must be %v"
-			panic(fmt.Sprintln(f, name, told))
-		}
-	} else {
-		r.types[name] = typ
-	}
+type bind struct {
+	query  string
+	fields []string
+	ctxref map[string]string
 }
 
-func (r *rest) typeName(typ interface{}) string {
-	t := reflect.TypeOf(typ)
-	name := strings.ToLower(t.Name())
-	if _, ok := r.types[name]; !ok {
-		panic(fmt.Sprintf("type '%v' not register", t))
+func (r *rest) Bind(name string, typ string, query string, fields []string, ctxref map[string]string) {
+	r.checkType(typ)
+	r.checkQuery(query)
+	if name == "" {
+		panic("name is empty")
 	}
-	return name
+	bt, ok := r.binds[typ]
+	if !ok {
+		bt = make(map[string]bind)
+		r.binds[typ] = bt
+	}
+	if _, ok = bt[name]; ok {
+		panic(fmt.Sprintln("'%s' already bind", name))
+	}
+
 }
 func (r *rest) registerQuery(name string, q interface{}) {
 	checkQueryName(name)
@@ -289,6 +299,39 @@ func (r *rest) registerQuery(name string, q interface{}) {
 	default:
 		panic(fmt.Sprintln("unknown query type: %v", reflect.TypeOf(q)))
 	}
+}
+func (r *rest) checkType(typ string) {
+	if _, ok := r.types[typ]; !ok {
+		f := "'%s' not defined"
+		panic(fmt.Sprintln(f, typ))
+	}
+	checkQueryName(strings.ToLower(typ))
+}
+func (r *rest) checkQuery(query string) {
+	if _, ok := r.queries[query]; !ok {
+		f := "'%s' not defined"
+		panic(fmt.Sprintln(f, query))
+	}
+}
+func (r *rest) DefType(def interface{}) {
+	typ := reflect.TypeOf(def)
+	if typ.Kind() != reflect.Struct {
+		panic("only struct type allowed")
+	}
+	name := typ.Name()
+	if _, ok := r.types[name]; ok {
+		panic(fmt.Sprintln("type '%s' already defined", name))
+	}
+	r.types[name] = typ
+	r.defSelf(name)
+}
+func (r *rest) defSelf(typ string) {
+	r.checkType(typ)
+	r.Def(typeNameToQueryName(typ), FieldQuery{
+		Fields: []string{"Id"},
+		Allow:  GET,
+		Unique: true,
+	})
 }
 func (r *rest) Def(name string, def interface{}) {
 	switch q := def.(type) {
@@ -304,22 +347,22 @@ func (r *rest) Def(name string, def interface{}) {
 }
 
 func (r *rest) defFieldQuery(name string, fq FieldQuery) {
-	r.registerType(fq.Type)
+	r.checkType(fq.Type)
 	r.registerQuery(name, fq)
 }
 func (r *rest) defSelectorQuery(name string, sq SelectorQuery) {
-	r.registerType(sq.BodyType)
-	r.registerType(sq.ResultType)
+	r.checkType(sq.BodyType)
+	r.checkType(sq.ResultType)
 	r.registerQuery(name, sq)
 }
 func (r *rest) defCustomQuery(name string, cq CustomQuery) {
-	r.registerType(cq.BodyType)
-	r.registerType(cq.ResultType)
+	r.checkType(cq.BodyType)
+	r.checkType(cq.ResultType)
 	r.registerQuery(name, cq)
 }
-func (r *rest) Index(typ interface{}, index I) {
-	r.registerType(typ)
-	c := r.s.DB(r.db).C(r.typeName(typ))
+func (r *rest) Index(typ string, index I) {
+	r.checkType(typ)
+	c := r.s.DB(r.db).C(strings.ToLower(typ))
 	mgoidx := mgo.Index{
 		Key:         index.Key,
 		Unique:      index.Unique,
@@ -335,14 +378,48 @@ func (r *rest) typeRes(t reflect.Type, uri *URI, ctx *Context) (res Resource, er
 	panic("Not Implement")
 }
 
+type resource struct {
+}
+
+func (res *resource) Get() Iter {
+	panic("Not Implement")
+
+}
+func (res *resource) GetSlice() (slice Slice, err error) {
+	panic("Not Implement")
+
+}
+
+func (res *resource) GetOne() (result interface{}, err error) {
+	panic("Not Implement")
+
+}
+
+func (res *resource) Put(body interface{}) (result interface{}, err error) {
+	panic("Not Implement")
+
+}
+
+func (res *resource) Delete() (err error) {
+	panic("Not Implement")
+
+}
+
+func (res *resource) Post(body interface{}) (result interface{}, err error) {
+	panic("Not Implement")
+
+}
+
+func (res *resource) Patch(body interface{}) (result interface{}, err error) {
+	panic("Not Implement")
+
+}
+
 func (r *rest) queryRes(query interface{}, uri *URI, ctx *Context) (res Resource, err error) {
 	panic("Not Implement")
 }
 func (r *rest) R(uri *URI, ctx *Context) (res Resource, err error) {
 	name := uri.Path[0]
-	if typ, ok := r.types[name]; ok {
-		return r.typeRes(typ, uri, ctx)
-	}
 	if qry, ok := r.queries[name]; ok {
 		if isSysQueryName(name) && !ctx.Sys {
 			return nil, &RESTError{Code: Forbidden, Msg: uri.String()}

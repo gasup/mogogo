@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"time"
+	"encoding/hex"
 )
 
 type ErrorCode uint
@@ -316,6 +317,10 @@ func (r *rest) DefType(def interface{}) {
 	if typ.Kind() != reflect.Struct {
 		panic("only struct type allowed")
 	}
+	ft, ok := typ.FieldByName("Base")
+	if !ok || !ft.Anonymous || ft.Type != baseType {
+		panic(fmt.Sprintln("%v must be embedding", baseType))
+	}
 	name := typ.Name()
 	if _, ok := r.types[name]; ok {
 		panic(fmt.Sprintln("type '%s' already defined", name))
@@ -394,7 +399,16 @@ func (r *rest) typeRes(t reflect.Type, uri *URI, ctx *Context) (res Resource, er
 }
 
 func (r *rest) newWithId(typ string, id string) (val interface{}, err error) {
-	panic("Not Implement")
+	v := reflect.New(r.types[typ])
+	b := v.FieldByName("Base").Addr().Interface().(*Base)
+	d, err := hex.DecodeString(id)
+	if err != nil || len(d) != 12 {
+		return nil, fmt.Errorf("id format error: %s", id)
+	}
+	b.id = bson.ObjectId(d)
+	b.t = typ
+	b.r = r
+	return v.Interface(), nil
 }
 
 type resource struct {

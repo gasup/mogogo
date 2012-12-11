@@ -65,14 +65,14 @@ type Base struct {
 	id     bson.ObjectId
 	ct     time.Time
 	mt     time.Time
-	rest   REST
+	r      *rest
 	loaded bool
 }
 
 var baseType reflect.Type = reflect.TypeOf(Base{})
 
-func (b *Base) Self() string {
-	return "/" + typeNameToQueryName(b.t) + "/" + b.id.Hex()
+func (b *Base) Self() *URI {
+	return &URI{b.r, []string{typeNameToQueryName(b.t), b.id.Hex()}, nil}
 }
 
 func (b *Base) Load() error {
@@ -253,8 +253,8 @@ func NewREST(s *mgo.Session, db string) REST {
 		s,
 		db,
 		make(map[string]reflect.Type),
-		make(map[string]interface{}),
-		make(map[string]map[string]bind),
+		make(map[string]*CustomQuery),
+		make(map[string]map[string]*bind),
 	}
 }
 
@@ -262,8 +262,8 @@ type rest struct {
 	s       *mgo.Session
 	db      string
 	types   map[string]reflect.Type
-	queries map[string]interface{}
-	binds   map[string]map[string]bind
+	queries map[string]*CustomQuery
+	binds   map[string]map[string]*bind
 }
 
 type bind struct {
@@ -280,32 +280,30 @@ func (r *rest) Bind(name string, typ string, query string, fields []string, ctxr
 	}
 	bt, ok := r.binds[typ]
 	if !ok {
-		bt = make(map[string]bind)
+		bt = make(map[string]*bind)
 		r.binds[typ] = bt
 	}
 	if _, ok = bt[name]; ok {
 		panic(fmt.Sprintln("'%s' already bind", name))
 	}
-
+	bt[name] = &bind{query, fields, ctxref}
 }
-func (r *rest) registerQuery(name string, q interface{}) {
+func (r *rest) registerQuery(name string, cq CustomQuery) {
 	checkQueryName(name)
 	if _, ok := r.queries[name]; ok {
 		panic(fmt.Sprintln("query '%s' already defined", name))
 	}
-	switch q.(type) {
-	case FieldQuery, SelectorQuery, CustomQuery:
-		r.queries[name] = q
-	default:
-		panic(fmt.Sprintln("unknown query type: %v", reflect.TypeOf(q)))
-	}
+	r.queries[name] = &cq
+}
+func (r *rest) typeDefined(typ string) bool {
+	_, ok := r.types[typ]
+	return ok
 }
 func (r *rest) checkType(typ string) {
-	if _, ok := r.types[typ]; !ok {
+	if !r.typeDefined(typ) {
 		f := "'%s' not defined"
 		panic(fmt.Sprintln(f, typ))
 	}
-	checkQueryName(strings.ToLower(typ))
 }
 func (r *rest) checkQuery(query string) {
 	if _, ok := r.queries[query]; !ok {
@@ -322,6 +320,7 @@ func (r *rest) DefType(def interface{}) {
 	if _, ok := r.types[name]; ok {
 		panic(fmt.Sprintln("type '%s' already defined", name))
 	}
+	checkQueryName(strings.ToLower(name))
 	r.types[name] = typ
 	r.defSelf(name)
 }
@@ -348,16 +347,32 @@ func (r *rest) Def(name string, def interface{}) {
 
 func (r *rest) defFieldQuery(name string, fq FieldQuery) {
 	r.checkType(fq.Type)
-	r.registerQuery(name, fq)
+	panic("Not Implement")
 }
 func (r *rest) defSelectorQuery(name string, sq SelectorQuery) {
 	r.checkType(sq.BodyType)
 	r.checkType(sq.ResultType)
-	r.registerQuery(name, sq)
+	panic("Not Implement")
+}
+func (r *rest) checkElemType(elemtype []string) {
+	for _, e := range elemtype {
+		if r.typeDefined(e) {
+			continue
+		}
+		switch e {
+		case "int", "string", "bool":
+			continue
+		}
+		panic(fmt.Sprintf("type '%s' not support", e))
+	}
 }
 func (r *rest) defCustomQuery(name string, cq CustomQuery) {
 	r.checkType(cq.BodyType)
 	r.checkType(cq.ResultType)
+	r.checkElemType(cq.ElemType)
+	if cq.Handler == nil {
+		panic("Handler can't be nil")
+	}
 	r.registerQuery(name, cq)
 }
 func (r *rest) Index(typ string, index I) {
@@ -378,19 +393,18 @@ func (r *rest) typeRes(t reflect.Type, uri *URI, ctx *Context) (res Resource, er
 	panic("Not Implement")
 }
 
+func (r *rest) newWithId(typ string, id string) (val interface{}, err error) {
+	panic("Not Implement")
+}
+
 type resource struct {
+	cq  *CustomQuery
+	uri *URI
+	ctx *Context
+	r   *rest
 }
 
-func (res *resource) Get() Iter {
-	panic("Not Implement")
-
-}
-func (res *resource) GetSlice() (slice Slice, err error) {
-	panic("Not Implement")
-
-}
-
-func (res *resource) GetOne() (result interface{}, err error) {
+func (res *resource) Get() (result interface{}, err error) {
 	panic("Not Implement")
 
 }
@@ -415,11 +429,11 @@ func (res *resource) Patch(body interface{}) (result interface{}, err error) {
 
 }
 
-func (r *rest) queryRes(query interface{}, uri *URI, ctx *Context) (res Resource, err error) {
-	panic("Not Implement")
+func (r *rest) queryRes(cq *CustomQuery, uri *URI, ctx *Context) (res Resource, err error) {
+	return &resource{cq, uri, ctx, r}, nil
 }
 func (r *rest) R(uri *URI, ctx *Context) (res Resource, err error) {
-	name := uri.Path[0]
+	name := uri.path[0]
 	if qry, ok := r.queries[name]; ok {
 		if isSysQueryName(name) && !ctx.Sys {
 			return nil, &RESTError{Code: Forbidden, Msg: uri.String()}

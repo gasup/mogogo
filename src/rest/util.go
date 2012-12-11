@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -41,10 +42,33 @@ func isSysQueryName(qn string) bool {
 }
 
 type URI struct {
-	Path        []string
+	r           *rest
+	path        []string
 	QueryParams map[string]string
 }
 
+func (uri *URI) NumElem() int {
+	return len(uri.path) - 1
+}
+func (uri *URI) Elem(index int) (val interface{}, err error) {
+	if index < 0 || index >= uri.NumElem() {
+		panic(fmt.Sprintln("index out of bound: %d", index))
+	}
+	cq := uri.r.queries[uri.path[0]]
+	typ := cq.ElemType[index]
+	elem := uri.path[index+1]
+	switch typ {
+	case "int":
+		val, err = strconv.Atoi(elem)
+	case "string":
+		val, err = elem, nil
+	case "bool":
+		val, err = strconv.ParseBool(elem)
+	default:
+		val, err = uri.r.newWithId(typ, elem)
+	}
+	return
+}
 func (uri *URI) URLWithBase(base *url.URL) *url.URL {
 	u := uri.url()
 	u.Scheme = base.Scheme
@@ -53,7 +77,7 @@ func (uri *URI) URLWithBase(base *url.URL) *url.URL {
 }
 func (uri *URI) url() *url.URL {
 	var u url.URL
-	u.Path = "/" + strings.Join(uri.Path, "/")
+	u.Path = "/" + strings.Join(uri.path, "/")
 	vals := make(url.Values)
 	for k, v := range uri.QueryParams {
 		vals.Add(k, v)
@@ -73,7 +97,7 @@ func URIParse(s string) (uri *URI, err error) {
 		return nil, fmt.Errorf("must absolute url. %s", s)
 	}
 	uri = new(URI)
-	uri.Path = strings.Split(url.Path[1:], "/")
+	uri.path = strings.Split(url.Path[1:], "/")
 	uri.QueryParams = make(map[string]string)
 	for k, v := range url.Query() {
 		uri.QueryParams[k] = v[0]

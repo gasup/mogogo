@@ -1,13 +1,14 @@
 package rest
 
 import (
+	"encoding/hex"
 	"fmt"
 	"labix.org/v2/mgo"
 	"labix.org/v2/mgo/bson"
+	"net/url"
 	"reflect"
 	"strings"
 	"time"
-	"encoding/hex"
 )
 
 type ErrorCode uint
@@ -71,6 +72,14 @@ type Base struct {
 }
 
 var baseType reflect.Type = reflect.TypeOf(Base{})
+
+func hasBase(t reflect.Type) bool {
+	ft, ok := t.FieldByName("Base")
+	if !ok || !ft.Anonymous || ft.Type != baseType {
+		return false
+	}
+	return true
+}
 
 func (b *Base) Self() *URI {
 	return &URI{b.r, []string{typeNameToQueryName(b.t), b.id.Hex()}, nil}
@@ -272,7 +281,19 @@ type bind struct {
 	fields []string
 	ctxref map[string]string
 }
+type stage int
 
+const (
+	req stage = iota
+	store
+)
+
+func (r *rest) mapToStruct(m map[string]interface{}, typ string, base *url.URL, stg stage) (s interface{}, err error) {
+	panic("Not Implement")
+}
+func (r *rest) structToMap(s interface{}, stg stage) (m map[string]interface{}, err error) {
+	panic("Not Implement")
+}
 func (r *rest) Bind(name string, typ string, query string, fields []string, ctxref map[string]string) {
 	r.checkType(typ)
 	r.checkQuery(query)
@@ -317,8 +338,7 @@ func (r *rest) DefType(def interface{}) {
 	if typ.Kind() != reflect.Struct {
 		panic("only struct type allowed")
 	}
-	ft, ok := typ.FieldByName("Base")
-	if !ok || !ft.Anonymous || ft.Type != baseType {
+	if !hasBase(typ) {
 		panic(fmt.Sprintln("%v must be embedding", baseType))
 	}
 	name := typ.Name()
@@ -418,7 +438,30 @@ type resource struct {
 	r   *rest
 }
 
+func (res *resource) checkResult(val interface{}, err error) bool {
+	defResultType := res.r.types[res.cq.ResultType]
+	resultType := reflect.TypeOf(val)
+	if resultType.Kind() == reflect.Ptr && resultType.Elem() == defResultType {
+		return true
+	}
+	if _, ok := val.(Iter); ok {
+		return true
+	}
+	if val == nil && err != nil {
+		return true
+	}
+	return false
+}
 func (res *resource) Get() (result interface{}, err error) {
+	getable, ok := res.cq.Handler.(Getable)
+	if !ok {
+		return nil, &RESTError{Code: MethodNotAllowed, Msg: "GET"}
+	}
+	req := &Req{URI: res.uri, Method: GET}
+	result, err = getable.Get(req, res.ctx)
+	if res.checkResult(result, err) {
+		return
+	}
 	panic("Not Implement")
 
 }

@@ -1,4 +1,4 @@
-package rest
+package mogogo
 
 import (
 	"encoding/hex"
@@ -27,31 +27,31 @@ func (es ErrorCode) String() string {
 	var ret string
 	switch es {
 	case BadRequest:
-		ret = "Bad Request"
+		ret = "bad request"
 	case Unauthorized:
-		ret = "Unauthorized"
+		ret = "unauthorized"
 	case Forbidden:
-		ret = "Forbidden"
+		ret = "forbidden"
 	case NotFound:
-		ret = "Not Found"
+		ret = "not found"
 	case MethodNotAllowed:
-		ret = "Method Not Allowed"
+		ret = "method not allowed"
 	case Conflict:
-		ret = "Conflict"
+		ret = "conflict"
 	default:
 		panic(fmt.Sprintf("invalid errorCode: %d", es))
 	}
 	return ret
 }
 
-type RESTError struct {
+type Error struct {
 	Code   ErrorCode
 	Msg    string
 	Err    error
 	Fields map[string]string
 }
 
-func (re *RESTError) Error() string {
+func (re *Error) Error() string {
 	var ret string
 	if re.Msg != "" {
 		ret = re.Msg
@@ -169,7 +169,6 @@ type FieldQuery struct {
 
 //Selector Query, 只支持 GET
 type SelectorQuery struct {
-	BodyType     string
 	ResultType   string
 	SelectorFunc func(req *Req, ctx *Context) (selector map[string]interface{}, err error)
 	SortFields   []string
@@ -238,12 +237,12 @@ type Iter interface {
 type Resource interface {
 	Get() (result interface{}, err error)
 	Put(body interface{}) (result interface{}, err error)
-	Delete() (err error)
+	Delete() (result interface{}, err error)
 	Post(body interface{}) (result interface{}, err error)
 	Patch(body interface{}) (result interface{}, err error)
 }
 
-type REST interface {
+type Session interface {
 	DefType(def interface{})
 	Def(name string, def interface{})
 	Bind(name string, typ string, query string, fields []string, ctxref map[string]string)
@@ -258,7 +257,7 @@ type I struct {
 	ExpireAfter time.Duration
 }
 
-func NewREST(s *mgo.Session, db string) REST {
+func Dial(s *mgo.Session, db string) Session {
 	return &rest{
 		s,
 		db,
@@ -338,9 +337,6 @@ func (r *rest) DefType(def interface{}) {
 	if typ.Kind() != reflect.Struct {
 		panic("only struct type allowed")
 	}
-	if !hasBase(typ) {
-		panic(fmt.Sprintln("%v must be embedding", baseType))
-	}
 	name := typ.Name()
 	if _, ok := r.types[name]; ok {
 		panic(fmt.Sprintln("type '%s' already defined", name))
@@ -375,7 +371,6 @@ func (r *rest) defFieldQuery(name string, fq FieldQuery) {
 	panic("Not Implement")
 }
 func (r *rest) defSelectorQuery(name string, sq SelectorQuery) {
-	r.checkType(sq.BodyType)
 	r.checkType(sq.ResultType)
 	panic("Not Implement")
 }
@@ -413,9 +408,6 @@ func (r *rest) Index(typ string, index I) {
 	if err != nil {
 		panic(err)
 	}
-}
-func (r *rest) typeRes(t reflect.Type, uri *URI, ctx *Context) (res Resource, err error) {
-	panic("Not Implement")
 }
 
 func (r *rest) newWithId(typ string, id string) (val interface{}, err error) {
@@ -455,7 +447,7 @@ func (res *resource) checkResult(val interface{}, err error) bool {
 func (res *resource) Get() (result interface{}, err error) {
 	getable, ok := res.cq.Handler.(Getable)
 	if !ok {
-		return nil, &RESTError{Code: MethodNotAllowed, Msg: "GET"}
+		return nil, &Error{Code: MethodNotAllowed}
 	}
 	req := &Req{URI: res.uri, Method: GET}
 	result, err = getable.Get(req, res.ctx)
@@ -467,21 +459,56 @@ func (res *resource) Get() (result interface{}, err error) {
 }
 
 func (res *resource) Put(body interface{}) (result interface{}, err error) {
+	putable, ok := res.cq.Handler.(Putable)
+	if !ok {
+		return nil, &Error{Code: MethodNotAllowed}
+	}
+	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:body}
+	result, err = putable.Put(req, res.ctx)
+	if res.checkResult(result, err) {
+		return
+	}
 	panic("Not Implement")
-
 }
 
-func (res *resource) Delete() (err error) {
+func (res *resource) Delete() (result interface{}, err error) {
+	deletable, ok := res.cq.Handler.(Deletable)
+	if !ok {
+		return nil, &Error{Code: MethodNotAllowed}
+	}
+	req := &Req{URI: res.uri, Method: GET}
+	result, err = deletable.Delete(req, res.ctx)
+	if res.checkResult(result, err) {
+		return
+	}
 	panic("Not Implement")
 
 }
 
 func (res *resource) Post(body interface{}) (result interface{}, err error) {
+	postable, ok := res.cq.Handler.(Postable)
+	if !ok {
+		return nil, &Error{Code: MethodNotAllowed}
+	}
+	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:body}
+	result, err = postable.Post(req, res.ctx)
+	if res.checkResult(result, err) {
+		return
+	}
 	panic("Not Implement")
 
 }
 
 func (res *resource) Patch(body interface{}) (result interface{}, err error) {
+	patchable, ok := res.cq.Handler.(Patchable)
+	if !ok {
+		return nil, &Error{Code: MethodNotAllowed}
+	}
+	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:body}
+	result, err = patchable.Patch(req, res.ctx)
+	if res.checkResult(result, err) {
+		return
+	}
 	panic("Not Implement")
 
 }
@@ -493,9 +520,9 @@ func (r *rest) R(uri *URI, ctx *Context) (res Resource, err error) {
 	name := uri.path[0]
 	if qry, ok := r.queries[name]; ok {
 		if isSysQueryName(name) && !ctx.Sys {
-			return nil, &RESTError{Code: Forbidden, Msg: uri.String()}
+			return nil, &Error{Code: Forbidden, Msg: "private url"}
 		}
 		return r.queryRes(qry, uri, ctx)
 	}
-	return nil, &RESTError{Code: NotFound, Msg: uri.String()}
+	return nil, &Error{Code: NotFound, Msg: uri.String()}
 }

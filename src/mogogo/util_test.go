@@ -1,4 +1,4 @@
-package rest
+package mogogo
 
 import (
 	"fmt"

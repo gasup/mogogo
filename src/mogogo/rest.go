@@ -169,7 +169,7 @@ type FieldQuery struct {
 
 //Selector Query, 只支持 GET
 type SelectorQuery struct {
-	ResultType   string
+	ResponseType   string
 	SelectorFunc func(req *Req, ctx *Context) (selector map[string]interface{}, err error)
 	SortFields   []string
 	Count        bool
@@ -194,8 +194,8 @@ type Patchable interface {
 
 //Custom Query
 type CustomQuery struct {
-	BodyType   string
-	ResultType string
+	RequestType   string
+	ResponseType string
 	ElemType   []string
 	Handler    interface{}
 }
@@ -371,7 +371,7 @@ func (r *rest) defFieldQuery(name string, fq FieldQuery) {
 	panic("Not Implement")
 }
 func (r *rest) defSelectorQuery(name string, sq SelectorQuery) {
-	r.checkType(sq.ResultType)
+	r.checkType(sq.ResponseType)
 	panic("Not Implement")
 }
 func (r *rest) checkElemType(elemtype []string) {
@@ -387,8 +387,8 @@ func (r *rest) checkElemType(elemtype []string) {
 	}
 }
 func (r *rest) defCustomQuery(name string, cq CustomQuery) {
-	r.checkType(cq.BodyType)
-	r.checkType(cq.ResultType)
+	r.checkType(cq.RequestType)
+	r.checkType(cq.ResponseType)
 	r.checkElemType(cq.ElemType)
 	if cq.Handler == nil {
 		panic("Handler can't be nil")
@@ -430,19 +430,19 @@ type resource struct {
 	r   *rest
 }
 
-func (res *resource) checkResult(val interface{}, err error) bool {
-	defResultType := res.r.types[res.cq.ResultType]
+func (res *resource) checkResponse(val interface{}, err error) {
+	defResponseType := res.r.types[res.cq.ResponseType]
 	resultType := reflect.TypeOf(val)
-	if resultType.Kind() == reflect.Ptr && resultType.Elem() == defResultType {
-		return true
+	if resultType.Kind() == reflect.Ptr && resultType.Elem() == defResponseType {
+		return
 	}
 	if _, ok := val.(Iter); ok {
-		return true
+		return
 	}
 	if val == nil && err != nil {
-		return true
+		return
 	}
-	return false
+	panic(fmt.Sprintf("can't support response type: %v", defResponseType))
 }
 func (res *resource) Get() (result interface{}, err error) {
 	getable, ok := res.cq.Handler.(Getable)
@@ -451,11 +451,8 @@ func (res *resource) Get() (result interface{}, err error) {
 	}
 	req := &Req{URI: res.uri, Method: GET}
 	result, err = getable.Get(req, res.ctx)
-	if res.checkResult(result, err) {
-		return
-	}
-	panic("Not Implement")
-
+	res.checkResponse(result, err)
+	return
 }
 
 func (res *resource) Put(body interface{}) (result interface{}, err error) {
@@ -465,10 +462,8 @@ func (res *resource) Put(body interface{}) (result interface{}, err error) {
 	}
 	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:body}
 	result, err = putable.Put(req, res.ctx)
-	if res.checkResult(result, err) {
-		return
-	}
-	panic("Not Implement")
+	res.checkResponse(result, err)
+	return
 }
 
 func (res *resource) Delete() (result interface{}, err error) {
@@ -478,11 +473,8 @@ func (res *resource) Delete() (result interface{}, err error) {
 	}
 	req := &Req{URI: res.uri, Method: GET}
 	result, err = deletable.Delete(req, res.ctx)
-	if res.checkResult(result, err) {
-		return
-	}
-	panic("Not Implement")
-
+	res.checkResponse(result, err)
+	return
 }
 
 func (res *resource) Post(body interface{}) (result interface{}, err error) {
@@ -492,11 +484,8 @@ func (res *resource) Post(body interface{}) (result interface{}, err error) {
 	}
 	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:body}
 	result, err = postable.Post(req, res.ctx)
-	if res.checkResult(result, err) {
-		return
-	}
-	panic("Not Implement")
-
+	res.checkResponse(result, err)
+	return
 }
 
 func (res *resource) Patch(body interface{}) (result interface{}, err error) {
@@ -506,11 +495,8 @@ func (res *resource) Patch(body interface{}) (result interface{}, err error) {
 	}
 	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:body}
 	result, err = patchable.Patch(req, res.ctx)
-	if res.checkResult(result, err) {
-		return
-	}
-	panic("Not Implement")
-
+	res.checkResponse(result, err)
+	return
 }
 
 func (r *rest) queryRes(cq *CustomQuery, uri *URI, ctx *Context) (res Resource, err error) {

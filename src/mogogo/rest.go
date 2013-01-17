@@ -236,10 +236,10 @@ type Iter interface {
 }
 type Resource interface {
 	Get() (result interface{}, err error)
-	Put(body interface{}) (result interface{}, err error)
-	Delete() (result interface{}, err error)
-	Post(body interface{}) (result interface{}, err error)
-	Patch(body interface{}) (result interface{}, err error)
+	Put(request interface{}) (response interface{}, err error)
+	Delete() (response interface{}, err error)
+	Post(request interface{}) (response interface{}, err error)
+	Patch(request interface{}) (response interface{}, err error)
 }
 
 type Session interface {
@@ -444,58 +444,58 @@ func (res *resource) checkResponse(val interface{}, err error) {
 	}
 	panic(fmt.Sprintf("can't support response type: %v", defResponseType))
 }
-func (res *resource) Get() (result interface{}, err error) {
+func (res *resource) Get() (response interface{}, err error) {
 	getable, ok := res.cq.Handler.(Getable)
 	if !ok {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
 	req := &Req{URI: res.uri, Method: GET}
-	result, err = getable.Get(req, res.ctx)
-	res.checkResponse(result, err)
+	response, err = getable.Get(req, res.ctx)
+	res.checkResponse(response, err)
 	return
 }
 
-func (res *resource) Put(body interface{}) (result interface{}, err error) {
+func (res *resource) Put(request interface{}) (response interface{}, err error) {
 	putable, ok := res.cq.Handler.(Putable)
 	if !ok {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
-	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:body}
-	result, err = putable.Put(req, res.ctx)
-	res.checkResponse(result, err)
+	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:request}
+	response, err = putable.Put(req, res.ctx)
+	res.checkResponse(response, err)
 	return
 }
 
-func (res *resource) Delete() (result interface{}, err error) {
+func (res *resource) Delete() (response interface{}, err error) {
 	deletable, ok := res.cq.Handler.(Deletable)
 	if !ok {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
 	req := &Req{URI: res.uri, Method: GET}
-	result, err = deletable.Delete(req, res.ctx)
-	res.checkResponse(result, err)
+	response, err = deletable.Delete(req, res.ctx)
+	res.checkResponse(response, err)
 	return
 }
 
-func (res *resource) Post(body interface{}) (result interface{}, err error) {
+func (res *resource) Post(request interface{}) (response interface{}, err error) {
 	postable, ok := res.cq.Handler.(Postable)
 	if !ok {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
-	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:body}
-	result, err = postable.Post(req, res.ctx)
-	res.checkResponse(result, err)
+	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:request}
+	response, err = postable.Post(req, res.ctx)
+	res.checkResponse(response, err)
 	return
 }
 
-func (res *resource) Patch(body interface{}) (result interface{}, err error) {
+func (res *resource) Patch(request interface{}) (response interface{}, err error) {
 	patchable, ok := res.cq.Handler.(Patchable)
 	if !ok {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
-	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:body}
-	result, err = patchable.Patch(req, res.ctx)
-	res.checkResponse(result, err)
+	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:request}
+	response, err = patchable.Patch(req, res.ctx)
+	res.checkResponse(response, err)
 	return
 }
 

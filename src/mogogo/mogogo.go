@@ -48,7 +48,7 @@ type Error struct {
 	Code   ErrorCode
 	Msg    string
 	Err    error
-	Fields map[string]string
+	Fields map[string]error
 }
 
 func (re *Error) Error() string {
@@ -422,7 +422,9 @@ func (r *rest) newWithId(typ string, id string) (val interface{}, err error) {
 	b.r = r
 	return v.Interface(), nil
 }
-
+func mapToType(m map[string]interface{}, t reflect.Type) (val interface{}, err error) {
+	panic("Not Implement")
+}
 type resource struct {
 	cq  *CustomQuery
 	uri *URI
@@ -430,10 +432,22 @@ type resource struct {
 	r   *rest
 }
 
+func (res *resource) requestToBody(req interface{}) (body interface{}, err error) {
+	defRequestType := res.r.types[res.cq.RequestType]
+	requestType := reflect.TypeOf(req)
+	if requestType.Kind() == reflect.Ptr && requestType.Elem() == defRequestType {
+		body, err = req, nil
+	} else if m,ok := req.(map[string]interface{});ok {
+		body, err = mapToType(m, defRequestType)
+	} else {
+		panic(fmt.Sprintf("can't support request type: %v", requestType))
+	}
+	return
+}
 func (res *resource) checkResponse(val interface{}, err error) {
-	defResponseType := res.r.types[res.cq.ResponseType]
+	responseType := res.r.types[res.cq.ResponseType]
 	resultType := reflect.TypeOf(val)
-	if resultType.Kind() == reflect.Ptr && resultType.Elem() == defResponseType {
+	if resultType.Kind() == reflect.Ptr && resultType.Elem() == responseType {
 		return
 	}
 	if _, ok := val.(Iter); ok {
@@ -442,7 +456,7 @@ func (res *resource) checkResponse(val interface{}, err error) {
 	if val == nil && err != nil {
 		return
 	}
-	panic(fmt.Sprintf("can't support response type: %v", defResponseType))
+	panic(fmt.Sprintf("can't support response type: %v", resultType))
 }
 func (res *resource) Get() (response interface{}, err error) {
 	getable, ok := res.cq.Handler.(Getable)
@@ -460,7 +474,11 @@ func (res *resource) Put(request interface{}) (response interface{}, err error) 
 	if !ok {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
-	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:request}
+	body, err := res.requestToBody(request);
+	if err != nil {
+		return nil, err
+	}
+	req := &Req{URI: res.uri, Method: GET, Body:body, RawBody:request}
 	response, err = putable.Put(req, res.ctx)
 	res.checkResponse(response, err)
 	return
@@ -482,7 +500,11 @@ func (res *resource) Post(request interface{}) (response interface{}, err error)
 	if !ok {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
-	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:request}
+	body, err := res.requestToBody(request);
+	if err != nil {
+		return nil, err
+	}
+	req := &Req{URI: res.uri, Method: GET, Body:body, RawBody:request}
 	response, err = postable.Post(req, res.ctx)
 	res.checkResponse(response, err)
 	return
@@ -493,6 +515,7 @@ func (res *resource) Patch(request interface{}) (response interface{}, err error
 	if !ok {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
+
 	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:request}
 	response, err = patchable.Patch(req, res.ctx)
 	res.checkResponse(response, err)

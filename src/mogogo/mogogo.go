@@ -67,6 +67,7 @@ type Base struct {
 	id     bson.ObjectId
 	ct     time.Time
 	mt     time.Time
+	self   interface{}
 	r      *rest
 	loaded bool
 }
@@ -79,6 +80,12 @@ func hasBase(t reflect.Type) bool {
 		return false
 	}
 	return true
+}
+
+func checkHasBase(t reflect.Type) {
+	if !hasBase(t) {
+		panic(fmt.Sprintln("%s must embed %s", t.Name(), baseType.Name()))
+	}
 }
 
 func (b *Base) Self() *URI {
@@ -158,8 +165,8 @@ func (m Method) String() string {
 type FieldQuery struct {
 	Type  string
 	Allow Method
-	//可以通过 ":" 引用 Context. 比如 "user:currentUser"
 	Fields     []string
+	ContextRef map[string]string
 	SortFields []string
 	Unique     bool
 	Count      bool
@@ -169,7 +176,7 @@ type FieldQuery struct {
 
 //Selector Query, 只支持 GET
 type SelectorQuery struct {
-	ResponseType   string
+	ResponseType string
 	SelectorFunc func(req *Req, ctx *Context) (selector map[string]interface{}, err error)
 	SortFields   []string
 	Count        bool
@@ -194,10 +201,10 @@ type Patchable interface {
 
 //Custom Query
 type CustomQuery struct {
-	RequestType   string
+	RequestType  string
 	ResponseType string
-	ElemType   []string
-	Handler    interface{}
+	ElemType     []string
+	Handler      interface{}
 }
 
 type Context struct {
@@ -251,7 +258,7 @@ type Session interface {
 }
 
 type I struct {
-	Key         []string
+	Fields         []string
 	Unique      bool
 	Sparse      bool
 	ExpireAfter time.Duration
@@ -326,6 +333,10 @@ func (r *rest) checkType(typ string) {
 		panic(fmt.Sprintln(f, typ))
 	}
 }
+func (r *rest) typeByName(name string) reflect.Type {
+	r.checkType(name)
+	return r.types[name]
+}
 func (r *rest) checkQuery(query string) {
 	if _, ok := r.queries[query]; !ok {
 		f := "'%s' not defined"
@@ -366,9 +377,81 @@ func (r *rest) Def(name string, def interface{}) {
 	}
 }
 
+type fqHandler struct {
+	r *rest
+	fq *FieldQuery
+}
+func newFQHandler(r *rest, fq *FieldQuery) *fqHandler {
+	return &fqHandler{r, fq}
+}
+func (h *fqHandler) ensureIndex() {
+	fields := h.fq.Fields
+	if h.fq.ContextRef != nil {
+		for f, _ := range h.fq.ContextRef {
+			if _, ok := indexOf(fields, f); !ok {
+				fields = append(fields, f)
+			}
+		}
+	}
+	if !h.fq.Unique {
+		if h.fq.SortFields == nil {
+			fields = append(fields, "-Id")
+		} else {
+			fields = append(fields, h.fq.SortFields...)
+		}
+	}
+	idx := I{Fields: fields, Unique: h.fq.Unique}
+	h.r.Index(h.fq.Type, idx)
+}
+func (h *fqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) {
+	panic("Not Implement")
+}
+func (h *fqHandler) Put(req *Req, ctx *Context) (result interface{}, err error) {
+	panic("Not Implement")
+}
+func (h *fqHandler) Delete(req *Req, ctx *Context) (result interface{}, err error) {
+	panic("Not Implement")
+}
+func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error) {
+	panic("Not Implement")
+}
+func (h *fqHandler) Patch(req *Req, ctx *Context) (result interface{}, err error) {
+	panic("Not Implement")
+}
+
+func (r *rest) fieldsToElemType(t reflect.Type, fields []string) []string {
+	ret := make([]string, 0)
+	for _, field := range fields {
+		sf, ok := t.FieldByName(field)
+		if !ok {
+			panic(fmt.Sprintf("field '%s' not found in '%s'", field, t.Name()))
+		}
+		ft := sf.Type
+		if ft.Kind() == reflect.Ptr {
+			ft = ft.Elem()
+		}
+		switch ft.Kind() {
+		case reflect.Int:
+			ret = append(ret, "int")
+		case reflect.String:
+			ret = append(ret, "string")
+		case reflect.Bool:
+			ret = append(ret, "bool")
+		case reflect.Struct:
+			r.checkType(ft.Name())
+			r.checkHasBase(ft.Name())
+			ret = append(ret, ft.Name())
+		}
+
+	}
+	return ret
+}
 func (r *rest) defFieldQuery(name string, fq FieldQuery) {
 	r.checkType(fq.Type)
-	panic("Not Implement")
+	h := newFQHandler(r, &fq)
+	elemtype := r.fieldsToElemType(r.types[fq.Type], fq.Fields)
+	cq := CustomQuery{fq.Type, fq.Type, elemtype, h}
+	r.defCustomQuery(name, cq)
 }
 func (r *rest) defSelectorQuery(name string, sq SelectorQuery) {
 	r.checkType(sq.ResponseType)
@@ -395,11 +478,40 @@ func (r *rest) defCustomQuery(name string, cq CustomQuery) {
 	}
 	r.registerQuery(name, cq)
 }
+func (r *rest) fieldsToKeys(typ reflect.Type, fields []string) []string {
+	inidx := make(map[string]bool)
+	ret := make([]string, 0)
+	for _, field := range fields {
+		f := field
+		p := ""
+		if strings.HasPrefix(f, "-") || strings.HasPrefix(f, "@") {
+			p = f[0:1]
+			f = f[1:]
+		}
+		if inidx[f] {
+			panic(fmt.Sprintf("duplicate field '%s'", f))
+		}
+		inidx[f] = true
+		_, hf := typ.FieldByName(f)
+		if f == "Id" {
+			ret = append(ret, p + "_id")
+		} else if hf || f == "MT" || f == "CT" {
+			ret = append(ret, p + strings.ToLower(f))
+		} else {
+			panic(fmt.Sprintf("field '%s' not found in '%s'", f, typ))
+		}
+	}
+	return ret
+}
+func (r *rest) checkHasBase(typ string) {
+	checkHasBase(r.types[typ])
+}
 func (r *rest) Index(typ string, index I) {
 	r.checkType(typ)
+	r.checkHasBase(typ)
 	c := r.s.DB(r.db).C(strings.ToLower(typ))
 	mgoidx := mgo.Index{
-		Key:         index.Key,
+		Key:         r.fieldsToKeys(r.types[typ], index.Fields),
 		Unique:      index.Unique,
 		Sparse:      index.Sparse,
 		ExpireAfter: index.ExpireAfter,
@@ -425,6 +537,7 @@ func (r *rest) newWithId(typ string, id string) (val interface{}, err error) {
 func mapToType(m map[string]interface{}, t reflect.Type) (val interface{}, err error) {
 	panic("Not Implement")
 }
+
 type resource struct {
 	cq  *CustomQuery
 	uri *URI
@@ -437,7 +550,7 @@ func (res *resource) requestToBody(req interface{}) (body interface{}, err error
 	requestType := reflect.TypeOf(req)
 	if requestType.Kind() == reflect.Ptr && requestType.Elem() == defRequestType {
 		body, err = req, nil
-	} else if m,ok := req.(map[string]interface{});ok {
+	} else if m, ok := req.(map[string]interface{}); ok {
 		body, err = mapToType(m, defRequestType)
 	} else {
 		panic(fmt.Sprintf("can't support request type: %v", requestType))
@@ -474,11 +587,11 @@ func (res *resource) Put(request interface{}) (response interface{}, err error) 
 	if !ok {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
-	body, err := res.requestToBody(request);
+	body, err := res.requestToBody(request)
 	if err != nil {
 		return nil, err
 	}
-	req := &Req{URI: res.uri, Method: GET, Body:body, RawBody:request}
+	req := &Req{URI: res.uri, Method: GET, Body: body, RawBody: request}
 	response, err = putable.Put(req, res.ctx)
 	res.checkResponse(response, err)
 	return
@@ -500,11 +613,11 @@ func (res *resource) Post(request interface{}) (response interface{}, err error)
 	if !ok {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
-	body, err := res.requestToBody(request);
+	body, err := res.requestToBody(request)
 	if err != nil {
 		return nil, err
 	}
-	req := &Req{URI: res.uri, Method: GET, Body:body, RawBody:request}
+	req := &Req{URI: res.uri, Method: GET, Body: body, RawBody: request}
 	response, err = postable.Post(req, res.ctx)
 	res.checkResponse(response, err)
 	return
@@ -516,7 +629,7 @@ func (res *resource) Patch(request interface{}) (response interface{}, err error
 		return nil, &Error{Code: MethodNotAllowed}
 	}
 
-	req := &Req{URI: res.uri, Method: GET, Body:nil, RawBody:request}
+	req := &Req{URI: res.uri, Method: GET, Body: nil, RawBody: request}
 	response, err = patchable.Patch(req, res.ctx)
 	res.checkResponse(response, err)
 	return

@@ -41,6 +41,14 @@ func isSysQueryName(qn string) bool {
 	return qn != "" && qn[0] == '-'
 }
 
+func indexOf(sa []string, s string) (index int, ok bool) {
+	for i, v := range sa {
+		if v == s {
+			return i, true
+		}
+	}
+	return 0, false
+}
 type URI struct {
 	r           *rest
 	path        []string

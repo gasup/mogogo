@@ -163,8 +163,8 @@ func (m Method) String() string {
 //指定 SortFields 时不可以开启 Pull
 //Unique 为 true 时不支持 POST, 为 false 时不支持 PUT
 type FieldQuery struct {
-	Type  string
-	Allow Method
+	Type       string
+	Allow      Method
 	Fields     []string
 	ContextRef map[string]string
 	SortFields []string
@@ -258,7 +258,7 @@ type Session interface {
 }
 
 type I struct {
-	Fields         []string
+	Fields      []string
 	Unique      bool
 	Sparse      bool
 	ExpireAfter time.Duration
@@ -378,9 +378,10 @@ func (r *rest) Def(name string, def interface{}) {
 }
 
 type fqHandler struct {
-	r *rest
+	r  *rest
 	fq *FieldQuery
 }
+
 func newFQHandler(r *rest, fq *FieldQuery) *fqHandler {
 	return &fqHandler{r, fq}
 }
@@ -494,9 +495,9 @@ func (r *rest) fieldsToKeys(typ reflect.Type, fields []string) []string {
 		inidx[f] = true
 		_, hf := typ.FieldByName(f)
 		if f == "Id" {
-			ret = append(ret, p + "_id")
+			ret = append(ret, p+"_id")
 		} else if hf || f == "MT" || f == "CT" {
-			ret = append(ret, p + strings.ToLower(f))
+			ret = append(ret, p+strings.ToLower(f))
 		} else {
 			panic(fmt.Sprintf("field '%s' not found in '%s'", f, typ))
 		}

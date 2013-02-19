@@ -49,6 +49,7 @@ func indexOf(sa []string, s string) (index int, ok bool) {
 	}
 	return 0, false
 }
+
 type URI struct {
 	r           *rest
 	path        []string

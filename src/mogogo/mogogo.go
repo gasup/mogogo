@@ -252,7 +252,7 @@ type Resource interface {
 type Session interface {
 	DefType(def interface{})
 	Def(name string, def interface{})
-	Bind(name string, typ string, query string, fields []string, ctxref map[string]string)
+	Bind(name string, typ string, query string, fields []string)
 	Index(typ string, index I)
 	R(uri *URI, ctx *Context) (res Resource, err error)
 }
@@ -285,7 +285,6 @@ type rest struct {
 type bind struct {
 	query  string
 	fields []string
-	ctxref map[string]string
 }
 type stage int
 
@@ -300,7 +299,7 @@ func (r *rest) mapToStruct(m map[string]interface{}, typ string, base *url.URL, 
 func (r *rest) structToMap(s interface{}, stg stage) (m map[string]interface{}, err error) {
 	panic("Not Implement")
 }
-func (r *rest) Bind(name string, typ string, query string, fields []string, ctxref map[string]string) {
+func (r *rest) Bind(name string, typ string, query string, fields []string) {
 	r.checkType(typ)
 	r.checkQuery(query)
 	if name == "" {
@@ -314,7 +313,7 @@ func (r *rest) Bind(name string, typ string, query string, fields []string, ctxr
 	if _, ok = bt[name]; ok {
 		panic(fmt.Sprintln("'%s' already bind", name))
 	}
-	bt[name] = &bind{query, fields, ctxref}
+	bt[name] = &bind{query, fields}
 }
 func (r *rest) registerQuery(name string, cq CustomQuery) {
 	checkQueryName(name)
@@ -395,8 +394,11 @@ func (h *fqHandler) ensureIndex() {
 		}
 	}
 	if !h.fq.Unique {
+		if h.fq.Pull && h.fq.SortFields != nil {
+			panic("pull and sort fields")
+		}
 		if h.fq.SortFields == nil {
-			fields = append(fields, "-Id")
+			fields = append(fields, "Id")
 		} else {
 			fields = append(fields, h.fq.SortFields...)
 		}
@@ -533,7 +535,8 @@ func (r *rest) newWithId(typ string, id string) (val interface{}, err error) {
 	b.id = bson.ObjectId(d)
 	b.t = typ
 	b.r = r
-	return v.Interface(), nil
+	b.self = v.Interface()
+	return b.self, nil
 }
 func mapToType(m map[string]interface{}, t reflect.Type) (val interface{}, err error) {
 	panic("Not Implement")

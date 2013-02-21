@@ -74,6 +74,7 @@ type Base struct {
 
 var baseType = reflect.TypeOf(Base{})
 var urlType = reflect.TypeOf(url.URL{})
+var timeType = reflect.TypeOf(time.Time{})
 
 func hasBase(t reflect.Type) bool {
 	ft, ok := t.FieldByName("Base")
@@ -85,7 +86,7 @@ func hasBase(t reflect.Type) bool {
 
 func checkHasBase(t reflect.Type) {
 	if !hasBase(t) {
-		panic(fmt.Sprintln("%s must embed %s", t.Name(), baseType.Name()))
+		panic(fmt.Sprintf("%s must embed %s", t.Name(), baseType.Name()))
 	}
 }
 
@@ -110,6 +111,7 @@ type Geo struct {
 	Lo float64
 	La float64
 }
+
 var geoType = reflect.TypeOf(Geo{})
 
 type Method uint
@@ -292,6 +294,7 @@ type bind struct {
 	query  string
 	fields []string
 }
+
 func getCheckNil(b bson.M, key string) interface{} {
 	ret := b[key]
 	if ret == nil {
@@ -300,9 +303,9 @@ func getCheckNil(b bson.M, key string) interface{} {
 	return ret
 }
 func (r *rest) bsonElemToSlice(v reflect.Value, t reflect.Type) reflect.Value {
-	ret := reflect.MakeSlice(t, v.Len(), 0)
-	for i :=0; i<ret.Len();i++ {
-		ret.Index(i).Set(r.bsonElemToValue(v.Index(i), t))
+	ret := reflect.MakeSlice(t, v.Len(), v.Len())
+	for i := 0; i < ret.Len(); i++ {
+		ret.Index(i).Set(r.bsonElemToValue(v.Index(i), t.Elem()))
 	}
 	return ret
 }
@@ -310,10 +313,10 @@ func (r *rest) bsonElemToStruct(v reflect.Value, t reflect.Type) reflect.Value {
 	var ret reflect.Value
 	if hasBase(t) {
 		s, err := r.newWithObjectId(t, v.Interface().(bson.ObjectId))
-		if err!=nil {
+		if err != nil {
 			panic(err)
 		}
-		ret = reflect.ValueOf(s)
+		ret = reflect.ValueOf(s).Elem()
 	} else if t == urlType {
 		s := v.Interface().(string)
 		if u, err := url.ParseRequestURI(s); err != nil {
@@ -321,10 +324,12 @@ func (r *rest) bsonElemToStruct(v reflect.Value, t reflect.Type) reflect.Value {
 		} else {
 			ret = reflect.ValueOf(*u)
 		}
+	} else if t == timeType {
+		ret = reflect.ValueOf(v.Interface().(time.Time))
 	} else if t == geoType {
 		lon := v.Index(0).Interface().(float64)
 		lat := v.Index(1).Interface().(float64)
-		ret = reflect.ValueOf(Geo{La:lat, Lo:lon})
+		ret = reflect.ValueOf(Geo{La: lat, Lo: lon})
 	} else {
 		panic(fmt.Sprintf("not support struct type %v", t))
 	}
@@ -334,25 +339,19 @@ func (r *rest) bsonElemToValue(v reflect.Value, t reflect.Type) reflect.Value {
 	var ret reflect.Value
 	switch t.Kind() {
 	case reflect.String:
-		ret = reflect.ValueOf(v.Interface().(string))
+		ret = reflect.New(t).Elem()
+		ret.SetString(v.Interface().(string))
 	case reflect.Bool:
-		ret = reflect.ValueOf(v.Bool())
-	case reflect.Int:
-		ret = reflect.ValueOf(int(v.Int()))
-	case reflect.Int8:
-		ret = reflect.ValueOf(int8(v.Int()))
-	case reflect.Int16:
-		ret = reflect.ValueOf(int16(v.Int()))
-	case reflect.Int32:
-		ret = reflect.ValueOf(int32(v.Int()))
-	case reflect.Int64:
-		ret = reflect.ValueOf(int64(v.Int()))
-	case reflect.Float32:
-		ret = reflect.ValueOf(float32(v.Float()))
-	case reflect.Float64:
-		ret = reflect.ValueOf(float64(v.Float()))
+		ret = reflect.New(t).Elem()
+		ret.SetBool(v.Bool())
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		ret = reflect.New(t).Elem()
+		ret.SetInt(v.Int())
+	case reflect.Float32, reflect.Float64:
+		ret = reflect.New(t).Elem()
+		ret.SetFloat(v.Float())
 	case reflect.Slice:
-		ret = r.bsonElemToSlice(v, t.Elem())
+		ret = r.bsonElemToSlice(v, t)
 	case reflect.Struct:
 		ret = r.bsonElemToStruct(v, t)
 	default:
@@ -360,7 +359,7 @@ func (r *rest) bsonElemToValue(v reflect.Value, t reflect.Type) reflect.Value {
 	}
 	return ret
 }
-func (r *rest) bsonToStruct(b bson.M , s interface{})  {
+func (r *rest) bsonToStruct(b bson.M, s interface{}) {
 	v := reflect.ValueOf(s).Elem()
 	t := v.Type()
 	base := getBase(v)
@@ -380,13 +379,13 @@ func (r *rest) bsonToStruct(b bson.M , s interface{})  {
 			}
 		} else {
 			if elem == nil {
-				panic(fmt.Sprintf(""))
+				panic(fmt.Sprintf("'%v.%s' not nil", v.Type(), fs.Name))
 			}
 			fv.Set(r.bsonElemToValue(reflect.ValueOf(elem), fs.Type))
 		}
 	}
 }
-func (r *rest) structToBson(s interface{}) bson.M  {
+func (r *rest) structToBson(s interface{}) bson.M {
 	panic("Not Implement")
 }
 func (r *rest) Bind(name string, typ string, query string, fields []string) {
@@ -401,14 +400,14 @@ func (r *rest) Bind(name string, typ string, query string, fields []string) {
 		r.binds[typ] = bt
 	}
 	if _, ok = bt[name]; ok {
-		panic(fmt.Sprintln("'%s' already bind", name))
+		panic(fmt.Sprintf("'%s' already bind", name))
 	}
 	bt[name] = &bind{query, fields}
 }
 func (r *rest) registerQuery(name string, cq CustomQuery) {
 	checkQueryName(name)
 	if _, ok := r.queries[name]; ok {
-		panic(fmt.Sprintln("query '%s' already defined", name))
+		panic(fmt.Sprintf("query '%s' already defined", name))
 	}
 	r.queries[name] = &cq
 }
@@ -419,7 +418,7 @@ func (r *rest) typeDefined(typ string) bool {
 func (r *rest) checkType(typ string) {
 	if !r.typeDefined(typ) {
 		f := "'%s' not defined"
-		panic(fmt.Sprintln(f, typ))
+		panic(fmt.Sprintf(f, typ))
 	}
 }
 func (r *rest) typeByName(name string) reflect.Type {
@@ -429,7 +428,7 @@ func (r *rest) typeByName(name string) reflect.Type {
 func (r *rest) checkQuery(query string) {
 	if _, ok := r.queries[query]; !ok {
 		f := "'%s' not defined"
-		panic(fmt.Sprintln(f, query))
+		panic(fmt.Sprintf(f, query))
 	}
 }
 func (r *rest) DefType(def interface{}) {
@@ -439,7 +438,7 @@ func (r *rest) DefType(def interface{}) {
 	}
 	name := typ.Name()
 	if _, ok := r.types[name]; ok {
-		panic(fmt.Sprintln("type '%s' already defined", name))
+		panic(fmt.Sprintf("type '%s' already defined", name))
 	}
 	checkQueryName(strings.ToLower(name))
 	r.types[name] = typ
@@ -448,6 +447,7 @@ func (r *rest) DefType(def interface{}) {
 func (r *rest) defSelf(typ string) {
 	r.checkType(typ)
 	r.Def(typeNameToQueryName(typ), FieldQuery{
+		Type:   typ,
 		Fields: []string{"Id"},
 		Allow:  GET,
 		Unique: true,
@@ -462,7 +462,7 @@ func (r *rest) Def(name string, def interface{}) {
 	case CustomQuery:
 		r.defCustomQuery(name, q)
 	default:
-		panic(fmt.Sprintln("unknown query type: %v", reflect.TypeOf(def)))
+		panic(fmt.Sprintf("unknown query type: %v", reflect.TypeOf(def)))
 	}
 }
 
@@ -515,6 +515,13 @@ func (h *fqHandler) Patch(req *Req, ctx *Context) (result interface{}, err error
 func (r *rest) fieldsToElemType(t reflect.Type, fields []string) []string {
 	ret := make([]string, 0)
 	for _, field := range fields {
+		if field == "Id" {
+			ret = append(ret, t.Name())
+			continue
+		}
+		if field == "CT" || field == "MT" {
+			panic(fmt.Sprintf("elem type not support type '%s'", "time.Time"))
+		}
 		sf, ok := t.FieldByName(field)
 		if !ok {
 			panic(fmt.Sprintf("field '%s' not found in '%s'", field, t.Name()))
@@ -534,6 +541,8 @@ func (r *rest) fieldsToElemType(t reflect.Type, fields []string) []string {
 			r.checkType(ft.Name())
 			r.checkHasBase(ft.Name())
 			ret = append(ret, ft.Name())
+		default:
+			panic(fmt.Sprintf("elem type not support type '%v'", ft))
 		}
 
 	}
@@ -614,9 +623,9 @@ func (r *rest) Index(typ string, index I) {
 		panic(err)
 	}
 }
-func  (r *rest) newWithObjectId(typ reflect.Type, id bson.ObjectId) (val interface{}, err error) {
+func (r *rest) newWithObjectId(typ reflect.Type, id bson.ObjectId) (val interface{}, err error) {
 	v := reflect.New(typ)
-	b := getBase(v)
+	b := getBase(v.Elem())
 	b.id = id
 	b.t = typ.Name()
 	b.r = r

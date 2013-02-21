@@ -72,7 +72,8 @@ type Base struct {
 	loaded bool
 }
 
-var baseType reflect.Type = reflect.TypeOf(Base{})
+var baseType = reflect.TypeOf(Base{})
+var urlType = reflect.TypeOf(url.URL{})
 
 func hasBase(t reflect.Type) bool {
 	ft, ok := t.FieldByName("Base")
@@ -86,6 +87,10 @@ func checkHasBase(t reflect.Type) {
 	if !hasBase(t) {
 		panic(fmt.Sprintln("%s must embed %s", t.Name(), baseType.Name()))
 	}
+}
+
+func getBase(v reflect.Value) *Base {
+	return v.FieldByName("Base").Addr().Interface().(*Base)
 }
 
 func (b *Base) Self() *URI {
@@ -105,6 +110,7 @@ type Geo struct {
 	Lo float64
 	La float64
 }
+var geoType = reflect.TypeOf(Geo{})
 
 type Method uint
 
@@ -286,17 +292,101 @@ type bind struct {
 	query  string
 	fields []string
 }
-type stage int
-
-const (
-	req stage = iota
-	store
-)
-
-func (r *rest) mapToStruct(m map[string]interface{}, typ string, base *url.URL, stg stage) (s interface{}, err error) {
-	panic("Not Implement")
+func getCheckNil(b bson.M, key string) interface{} {
+	ret := b[key]
+	if ret == nil {
+		panic(fmt.Sprintf("key '%s' is nil", key))
+	}
+	return ret
 }
-func (r *rest) structToMap(s interface{}, stg stage) (m map[string]interface{}, err error) {
+func (r *rest) bsonElemToSlice(v reflect.Value, t reflect.Type) reflect.Value {
+	ret := reflect.MakeSlice(t, v.Len(), 0)
+	for i :=0; i<ret.Len();i++ {
+		ret.Index(i).Set(r.bsonElemToValue(v.Index(i), t))
+	}
+	return ret
+}
+func (r *rest) bsonElemToStruct(v reflect.Value, t reflect.Type) reflect.Value {
+	var ret reflect.Value
+	if hasBase(t) {
+		s, err := r.newWithObjectId(t, v.Interface().(bson.ObjectId))
+		if err!=nil {
+			panic(err)
+		}
+		ret = reflect.ValueOf(s)
+	} else if t == urlType {
+		s := v.Interface().(string)
+		if u, err := url.ParseRequestURI(s); err != nil {
+			panic(err)
+		} else {
+			ret = reflect.ValueOf(*u)
+		}
+	} else if t == geoType {
+		lon := v.Index(0).Interface().(float64)
+		lat := v.Index(1).Interface().(float64)
+		ret = reflect.ValueOf(Geo{La:lat, Lo:lon})
+	} else {
+		panic(fmt.Sprintf("not support struct type %v", t))
+	}
+	return ret
+}
+func (r *rest) bsonElemToValue(v reflect.Value, t reflect.Type) reflect.Value {
+	var ret reflect.Value
+	switch t.Kind() {
+	case reflect.String:
+		ret = reflect.ValueOf(v.Interface().(string))
+	case reflect.Bool:
+		ret = reflect.ValueOf(v.Bool())
+	case reflect.Int:
+		ret = reflect.ValueOf(int(v.Int()))
+	case reflect.Int8:
+		ret = reflect.ValueOf(int8(v.Int()))
+	case reflect.Int16:
+		ret = reflect.ValueOf(int16(v.Int()))
+	case reflect.Int32:
+		ret = reflect.ValueOf(int32(v.Int()))
+	case reflect.Int64:
+		ret = reflect.ValueOf(int64(v.Int()))
+	case reflect.Float32:
+		ret = reflect.ValueOf(float32(v.Float()))
+	case reflect.Float64:
+		ret = reflect.ValueOf(float64(v.Float()))
+	case reflect.Slice:
+		ret = r.bsonElemToSlice(v, t.Elem())
+	case reflect.Struct:
+		ret = r.bsonElemToStruct(v, t)
+	default:
+		panic(fmt.Sprintf("not support type: '%v'", t))
+	}
+	return ret
+}
+func (r *rest) bsonToStruct(b bson.M , s interface{})  {
+	v := reflect.ValueOf(s).Elem()
+	t := v.Type()
+	base := getBase(v)
+	base.id = getCheckNil(b, "_id").(bson.ObjectId)
+	base.mt = getCheckNil(b, "mt").(time.Time)
+	base.ct = getCheckNil(b, "ct").(time.Time)
+	for i := 0; i < t.NumField(); i++ {
+		fs := t.Field(i)
+		if fs.Anonymous && fs.Type == baseType {
+			continue
+		}
+		fv := v.Field(i)
+		elem := b[strings.ToLower(fs.Name)]
+		if fs.Type.Kind() == reflect.Ptr {
+			if elem != nil {
+				fv.Set(r.bsonElemToValue(reflect.ValueOf(elem), fs.Type.Elem()).Addr())
+			}
+		} else {
+			if elem == nil {
+				panic(fmt.Sprintf(""))
+			}
+			fv.Set(r.bsonElemToValue(reflect.ValueOf(elem), fs.Type))
+		}
+	}
+}
+func (r *rest) structToBson(s interface{}) bson.M  {
 	panic("Not Implement")
 }
 func (r *rest) Bind(name string, typ string, query string, fields []string) {
@@ -524,19 +614,21 @@ func (r *rest) Index(typ string, index I) {
 		panic(err)
 	}
 }
-
+func  (r *rest) newWithObjectId(typ reflect.Type, id bson.ObjectId) (val interface{}, err error) {
+	v := reflect.New(typ)
+	b := getBase(v)
+	b.id = id
+	b.t = typ.Name()
+	b.r = r
+	b.self = v.Interface()
+	return b.self, nil
+}
 func (r *rest) newWithId(typ string, id string) (val interface{}, err error) {
-	v := reflect.New(r.types[typ])
-	b := v.FieldByName("Base").Addr().Interface().(*Base)
 	d, err := hex.DecodeString(id)
 	if err != nil || len(d) != 12 {
 		return nil, fmt.Errorf("id format error: %s", id)
 	}
-	b.id = bson.ObjectId(d)
-	b.t = typ
-	b.r = r
-	b.self = v.Interface()
-	return b.self, nil
+	return r.newWithObjectId(r.types[typ], bson.ObjectId(d))
 }
 func mapToType(m map[string]interface{}, t reflect.Type) (val interface{}, err error) {
 	panic("Not Implement")

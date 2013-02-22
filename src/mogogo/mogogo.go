@@ -367,26 +367,118 @@ func (r *rest) bsonToStruct(b bson.M, s interface{}) {
 	base.mt = getCheckNil(b, "mt").(time.Time)
 	base.ct = getCheckNil(b, "ct").(time.Time)
 	for i := 0; i < t.NumField(); i++ {
-		fs := t.Field(i)
-		if fs.Anonymous && fs.Type == baseType {
+		sf := t.Field(i)
+		if sf.Anonymous && sf.Type == baseType {
 			continue
 		}
 		fv := v.Field(i)
-		elem := b[strings.ToLower(fs.Name)]
-		if fs.Type.Kind() == reflect.Ptr {
+		elem := b[strings.ToLower(sf.Name)]
+		if sf.Type.Kind() == reflect.Ptr {
 			if elem != nil {
-				fv.Set(r.bsonElemToValue(reflect.ValueOf(elem), fs.Type.Elem()).Addr())
+				fv.Set(r.bsonElemToValue(reflect.ValueOf(elem), sf.Type.Elem()).Addr())
+			}
+		} else if  sf.Type.Kind() == reflect.Slice {
+			if elem != nil {
+				fv.Set(r.bsonElemToValue(reflect.ValueOf(elem), sf.Type))
+			} else {
+				fv.Set(reflect.MakeSlice(sf.Type, 0, 0))
 			}
 		} else {
 			if elem == nil {
-				panic(fmt.Sprintf("'%v.%s' not nil", v.Type(), fs.Name))
+				panic(fmt.Sprintf("'%v.%s' not nil", v.Type(), sf.Name))
 			}
-			fv.Set(r.bsonElemToValue(reflect.ValueOf(elem), fs.Type))
+			fv.Set(r.bsonElemToValue(reflect.ValueOf(elem), sf.Type))
 		}
 	}
+	base.loaded = true
+}
+
+func (r *rest) sliceToBsonElem(v reflect.Value, t reflect.Type) interface{} {
+	ret := make([]interface{}, v.Len(), v.Len())
+	for i := 0; i < len(ret); i++ {
+		ret[i] = r.valueToBsonElem(v.Index(i), t.Elem())
+	}
+	return ret
+}
+func (r *rest) structToBsonElem(v reflect.Value, t reflect.Type) interface{} {
+	var ret interface{}
+	if hasBase(t) {
+		ret = getBase(v).id
+	} else if t == urlType {
+		ret = v.Addr().Interface().(*url.URL).String()
+	} else if t == timeType {
+		ret = v.Interface()
+	} else if t == geoType {
+		geo := v.Interface().(Geo)
+		ret = []interface{}{geo.Lo, geo.La}
+	} else {
+		panic(fmt.Sprintf("not support struct type %v", t))
+	}
+	return ret
+}
+func  (r *rest) valueToBsonElem(v reflect.Value, t reflect.Type) interface{} {
+	var ret interface{}
+	switch t.Kind() {
+	case reflect.String:
+		fallthrough
+	case reflect.Bool:
+		fallthrough
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		fallthrough
+	case reflect.Float32, reflect.Float64:
+		ret = v.Interface()
+	case reflect.Slice:
+		ret = r.sliceToBsonElem(v, t)
+	case reflect.Struct:
+		ret = r.structToBsonElem(v, t)
+	default:
+		panic(fmt.Sprintf("not support type: '%v'", t))
+	}
+	return ret
 }
 func (r *rest) structToBson(s interface{}) bson.M {
-	panic("Not Implement")
+	ret := make(bson.M)
+	sv := reflect.ValueOf(s).Elem()
+	st := sv.Type()
+	base := getBase(sv)
+	if !base.loaded {
+		panic("struct not loaded")
+	}
+	if base.id != "" {
+		ret["_id"] = base.id
+		if base.mt.IsZero() {
+			panic("modifiy time is zero")
+		}
+		if base.ct.IsZero() {
+			panic("create time is zero")
+		}
+		ret["mt"] = base.mt
+		ret["ct"] = base.ct
+	}
+	for i := 0; i < st.NumField(); i++ {
+		sf := st.Field(i)
+		key := strings.ToLower(sf.Name)
+		if sf.Anonymous && sf.Type == baseType {
+			continue
+		}
+		fv := sv.Field(i)
+		if sf.Type.Kind() == reflect.Ptr {
+			if !fv.IsNil() {
+				ret[key] = r.valueToBsonElem(fv.Elem(), sf.Type.Elem())
+			}
+		} else if sf.Type.Kind() == reflect.Slice {
+			if !fv.IsNil() {
+				ret[key] = r.valueToBsonElem(fv, sf.Type)
+			} else {
+				ret[key] = make([]interface{}, 0)
+			}
+		} else {
+			ret[key] = r.valueToBsonElem(fv, sf.Type)
+		}
+
+	}
+	return ret
+
 }
 func (r *rest) Bind(name string, typ string, query string, fields []string) {
 	r.checkType(typ)

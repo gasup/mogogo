@@ -3,9 +3,9 @@ package mogogo
 import (
 	"encoding/hex"
 	"fmt"
+	"labix.org/v2/mgo/bson"
 	"net/url"
 	"regexp"
-	"labix.org/v2/mgo/bson"
 	"strconv"
 	"strings"
 	"unicode"
@@ -58,6 +58,7 @@ func parseObjectId(h string) (id bson.ObjectId, err error) {
 	}
 	return bson.ObjectId(d), nil
 }
+
 type URI struct {
 	r           *rest
 	path        []string

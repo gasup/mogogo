@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"labix.org/v2/mgo"
 	"labix.org/v2/mgo/bson"
+	"math"
 	"net/url"
 	"reflect"
 	"strings"
@@ -379,7 +380,7 @@ func (r *rest) bsonToStruct(b bson.M, s interface{}) {
 			if elem != nil {
 				fv.Set(r.bsonElemToValue(reflect.ValueOf(elem), sf.Type.Elem()).Addr())
 			}
-		} else if  sf.Type.Kind() == reflect.Slice {
+		} else if sf.Type.Kind() == reflect.Slice {
 			if elem != nil {
 				fv.Set(r.bsonElemToValue(reflect.ValueOf(elem), sf.Type))
 			} else {
@@ -418,7 +419,7 @@ func (r *rest) structToBsonElem(v reflect.Value, t reflect.Type) interface{} {
 	}
 	return ret
 }
-func  (r *rest) valueToBsonElem(v reflect.Value, t reflect.Type) interface{} {
+func (r *rest) valueToBsonElem(v reflect.Value, t reflect.Type) interface{} {
 	var ret interface{}
 	switch t.Kind() {
 	case reflect.String:
@@ -486,14 +487,14 @@ func (r *rest) mapElemToSlice(v reflect.Value, t reflect.Type, key string) (refl
 	ret := reflect.MakeSlice(t, v.Len(), v.Len())
 	for i := 0; i < ret.Len(); i++ {
 		ki := fmt.Sprintf("%s[%d]", key, i)
-		v, err := r.mapElemToValue(v.Index(i), t.Elem(), ki)
+		val, err := r.mapElemToValue(v.Index(i), t.Elem(), ki)
 		if err != nil {
 			return reflect.Value{}, err
 		}
-		if !v.IsValid() {
-			panic(ki)
+		if val.Kind() == reflect.Interface {
+			val = val.Elem()
 		}
-		ret.Index(i).Set(v)
+		ret.Index(i).Set(val)
 	}
 	return ret, nil
 }
@@ -504,12 +505,12 @@ func (r *rest) mapElemToBase(v reflect.Value, t reflect.Type, key string) (refle
 		return ret, typeError(key, t, v.Type())
 	}
 	id, err := parseObjectId(hexId)
-	if  err != nil {
-		return ret, &Error{Code:BadRequest, Msg:"field '" + key +"' parse error", Err:err}
+	if err != nil {
+		return ret, &Error{Code: BadRequest, Msg: "field '" + key + "' parse error", Err: err}
 	}
 	s, err := r.newWithObjectId(t, id)
 	if err != nil {
-		return ret, &Error{Code:BadRequest, Msg:"field '" + key + "'", Err:err}
+		return ret, &Error{Code: BadRequest, Msg: "field '" + key + "'", Err: err}
 	}
 	ret = reflect.ValueOf(s).Elem()
 	return ret, nil
@@ -521,8 +522,8 @@ func (r *rest) mapElemToURL(v reflect.Value, t reflect.Type, key string) (reflec
 		return ret, typeError(key, t, v.Type())
 	}
 	u, err := url.ParseRequestURI(s)
-	if  err != nil {
-		return ret, &Error{Code:BadRequest, Msg:"field '" + key +"' parse error", Err:err}
+	if err != nil {
+		return ret, &Error{Code: BadRequest, Msg: "field '" + key + "' parse error", Err: err}
 	}
 	ret = reflect.ValueOf(*u)
 	return ret, nil
@@ -535,7 +536,7 @@ func (r *rest) mapElemToTime(v reflect.Value, t reflect.Type, key string) (refle
 	}
 	tm, err := time.Parse(time.RFC3339, s)
 	if err != nil {
-		return ret, &Error{Code:BadRequest, Msg:"field '" + key + "'", Err:err}
+		return ret, &Error{Code: BadRequest, Msg: "field '" + key + "'", Err: err}
 	}
 	ret = reflect.ValueOf(tm)
 	return ret, nil
@@ -545,12 +546,12 @@ func (r *rest) mapElemToGeo(v reflect.Value, t reflect.Type, key string) (reflec
 	msg := fmt.Sprintf("field '%s' want {la:float, lo:float}", key)
 	geomap, ok := v.Interface().(map[string]interface{})
 	if !ok {
-		return ret, &Error{Code:BadRequest, Msg:msg}
+		return ret, &Error{Code: BadRequest, Msg: msg}
 	}
 	lon, lonOk := geomap["lo"].(float64)
 	lat, latOk := geomap["la"].(float64)
 	if !lonOk || !latOk {
-		return ret, &Error{Code:BadRequest, Msg:msg}
+		return ret, &Error{Code: BadRequest, Msg: msg}
 	}
 	ret = reflect.ValueOf(Geo{La: lat, Lo: lon})
 	return ret, nil
@@ -563,7 +564,7 @@ func (r *rest) mapElemToStruct(v reflect.Value, t reflect.Type, key string) (ref
 	} else if t == urlType {
 		ret, err = r.mapElemToURL(v, t, key)
 	} else if t == timeType {
-		ret, err= r.mapElemToTime(v, t, key)
+		ret, err = r.mapElemToTime(v, t, key)
 	} else if t == geoType {
 		ret, err = r.mapElemToGeo(v, t, key)
 	} else {
@@ -571,13 +572,60 @@ func (r *rest) mapElemToStruct(v reflect.Value, t reflect.Type, key string) (ref
 	}
 	return ret, err
 }
+func (r *rest) mapElemToInt(v reflect.Value, t reflect.Type, key string) (ret int64, err error) {
+	i := v.Interface()
+	switch val := i.(type) {
+	case int:
+		ret, err = int64(val), nil
+	case float64:
+		n, frac := math.Modf(val)
+		if frac != 0.0 {
+			ret, err = 0, typeError(key, t, v.Type())
+		} else {
+			ret, err = int64(n), nil
+		}
+	case float32:
+		n, frac := math.Modf(float64(val))
+		if frac != 0.0 {
+			ret, err = 0, typeError(key, t, v.Type())
+		} else {
+			ret, err = int64(n), nil
+		}
+	case int8:
+		ret, err = int64(val), nil
+	case int16:
+		ret, err = int64(val), nil
+	case int32:
+		ret, err = int64(val), nil
+	case int64:
+		ret, err = int64(val), nil
+	default:
+		ret, err = 0, typeError(key, t, v.Type())
+	}
+	return
+}
+
+func (r *rest) mapElemToFloat(v reflect.Value, t reflect.Type, key string) (ret float64, err error) {
+
+	switch val := v.Interface().(type) {
+	case float64:
+		ret, err = val, nil
+	case float32:
+		ret, err = float64(val), nil
+	default:
+		ret, err = 0, typeError(key, t, v.Type())
+	}
+	return
+}
+
 func typeError(key string, want, but reflect.Type) error {
 	msg := fmt.Sprintf("field '%s' want type '%v' but '%v'", key, want, but)
-	return &Error{Code:BadRequest, Msg:msg}
+	return &Error{Code: BadRequest, Msg: msg}
 }
+
 func (r *rest) mapElemToValue(v reflect.Value, t reflect.Type, key string) (reflect.Value, error) {
 	var ret reflect.Value
-	var err error 
+	var err error
 	switch t.Kind() {
 	case reflect.String:
 		ret = reflect.New(t).Elem()
@@ -595,16 +643,16 @@ func (r *rest) mapElemToValue(v reflect.Value, t reflect.Type, key string) (refl
 		ret.SetBool(b)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		ret = reflect.New(t).Elem()
-		i, ok := v.Interface().(int)
-		if !ok {
-			return ret, typeError(key, t, v.Type())
+		i, err := r.mapElemToInt(v, t, key)
+		if err != nil {
+			return ret, err
 		}
 		ret.SetInt(int64(i))
 	case reflect.Float32, reflect.Float64:
 		ret = reflect.New(t).Elem()
-		f, ok := v.Interface().(float64)
-		if !ok {
-			return ret, typeError(key, t, v.Type())
+		f, err := r.mapElemToFloat(v, t, key)
+		if err != nil {
+			return ret, err
 		}
 		ret.SetFloat(f)
 	case reflect.Slice:
@@ -613,7 +661,7 @@ func (r *rest) mapElemToValue(v reflect.Value, t reflect.Type, key string) (refl
 		ret, err = r.mapElemToStruct(v, t, key)
 	default:
 		msg := fmt.Sprintf("field '%s' type '%s' not support'", key, t.Name())
-		return ret, &Error{Code:BadRequest, Msg:msg}
+		return ret, &Error{Code: BadRequest, Msg: msg}
 	}
 	return ret, err
 }
@@ -623,34 +671,34 @@ func (r *rest) mapToBase(m map[string]interface{}, b *Base) error {
 	if !ok {
 		return nil
 	}
-	id,ok := idi.(string)
+	id, ok := idi.(string)
 	if !ok {
 		return typeError("id", reflect.TypeOf(""), reflect.TypeOf(idi))
 	}
 	if b.id, err = parseObjectId(id); err != nil {
-		return &Error{Code:BadRequest, Msg:"field 'id' parse error", Err:err}
+		return &Error{Code: BadRequest, Msg: "field 'id' parse error", Err: err}
 	}
 	cti, ok := m["ct"]
 	if !ok {
-		return &Error{Code:BadRequest, Msg:"field 'ct' not set"}
+		return &Error{Code: BadRequest, Msg: "field 'ct' not set"}
 	}
-	ct,ok := cti.(string)
+	ct, ok := cti.(string)
 	if !ok {
 		return typeError("ct", reflect.TypeOf(""), reflect.TypeOf(cti))
 	}
 	if b.ct, err = time.Parse(time.RFC3339, ct); err != nil {
-		return &Error{Code:BadRequest, Msg:"field 'ct' parse error", Err:err}
+		return &Error{Code: BadRequest, Msg: "field 'ct' parse error", Err: err}
 	}
 	mti, ok := m["mt"]
 	if !ok {
-		return &Error{Code:BadRequest, Msg:"field 'mt' not set"}
+		return &Error{Code: BadRequest, Msg: "field 'mt' not set"}
 	}
-	mt,ok := mti.(string)
+	mt, ok := mti.(string)
 	if !ok {
 		return typeError("mt", reflect.TypeOf(""), reflect.TypeOf(mti))
 	}
 	if b.mt, err = time.Parse(time.RFC3339, mt); err != nil {
-		return &Error{Code:BadRequest, Msg:"field 'mt' parse error", Err:err}
+		return &Error{Code: BadRequest, Msg: "field 'mt' parse error", Err: err}
 	}
 	return nil
 }
@@ -678,7 +726,7 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}) error {
 					v = v.Addr()
 				}
 			}
-		} else if  sf.Type.Kind() == reflect.Slice {
+		} else if sf.Type.Kind() == reflect.Slice {
 			if elem != nil {
 				v, err = r.mapElemToValue(reflect.ValueOf(elem), sf.Type, key)
 			} else {
@@ -687,7 +735,7 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}) error {
 		} else {
 			if elem == nil {
 				msg := fmt.Sprintf("field '%s' not set", key)
-				err = &Error{Code:BadRequest, Msg:msg}
+				err = &Error{Code: BadRequest, Msg: msg}
 			}
 			v, err = r.mapElemToValue(reflect.ValueOf(elem), sf.Type, key)
 		}
@@ -947,8 +995,8 @@ func (r *rest) newWithObjectId(typ reflect.Type, id bson.ObjectId) (val interfac
 }
 func (r *rest) newWithId(typ string, hex string) (val interface{}, err error) {
 	id, err := parseObjectId(hex)
-	if err != nil  {
-		return nil, fmt.Errorf("parse id error: %v", err)
+	if err != nil {
+		return nil, fmt.Errorf("parse object id error: %v", err)
 	}
 	return r.newWithObjectId(r.types[typ], id)
 }

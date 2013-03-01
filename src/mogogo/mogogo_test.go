@@ -131,27 +131,32 @@ func TestStructToBson(t *testing.T) {
 }
 
 var map1 = map[string]interface{}{
-	"id":  bson.NewObjectId().Hex(),
-	"ct":  time.Now().UTC().Format(time.RFC3339),
-	"mt":  time.Now().UTC().Format(time.RFC3339),
-	"s1":  "Hello World",
-	"s2":  "Liu Dian",
-	"s3":  "Pointer",
-	"b1":  true,
-	"i1":  1,
-	"i2":  2,
-	"i3":  3,
-	"i4":  4.0,
-	"f1":  3.0,
-	"f2":  6.0,
-	"a1":  []interface{}{"a", "b", "c"},
-	"a2":  []interface{}{bson.NewObjectId().Hex(), bson.NewObjectId().Hex(), bson.NewObjectId().Hex()},
-	"g1":  map[string]interface{}{"lo": float64(1.0), "la": float64(2.0)},
+	"id": bson.NewObjectId().Hex(),
+	"ct": time.Now().UTC().Format(time.RFC3339),
+	"mt": time.Now().UTC().Format(time.RFC3339),
+	"s1": "Hello World",
+	"s2": "Liu Dian",
+	"s3": "Pointer",
+	"b1": true,
+	"i1": 1,
+	"i2": 2,
+	"i3": 3,
+	"i4": 4.0,
+	"f1": 3.0,
+	"f2": 6.0,
+	"a1": []interface{}{"a", "b", "c"},
+	"a2": []interface{}{
+		map[string]interface{}{"id": bson.NewObjectId().Hex()},
+		map[string]interface{}{"id": bson.NewObjectId().Hex()},
+		map[string]interface{}{"id": bson.NewObjectId().Hex()},
+	},
+	"g1":  map[string]interface{}{"lon": float64(1.0), "lat": float64(2.0)},
 	"t1":  time1.Format(time.RFC3339),
-	"st1": struct1.Hex(),
+	"st1": map[string]interface{}{"id": struct1.Hex()},
 	"u1":  "https://twitter.com/liudian",
 	"u2":  "/search?q=golang",
 }
+var baseURL1, _ = url.Parse("http://abc.com/efg")
 
 func TestMapToStruct(t *testing.T) {
 	ms, err := mgo.Dial("localhost")
@@ -163,7 +168,7 @@ func TestMapToStruct(t *testing.T) {
 	session.DefType(S{})
 	rest := session.(*rest)
 	var s S
-	err = rest.mapToStruct(map1, &s)
+	err = rest.mapToStruct(map1, &s, baseURL1)
 	if err != nil {
 		t.Error(err)
 		return
@@ -212,7 +217,7 @@ func ExampleMapToStruct1() {
 		Base
 		F int
 	}
-	err = rest.mapToStruct(map[string]interface{}{"f": 1.1}, &s)
+	err = rest.mapToStruct(map[string]interface{}{"f": 1.1}, &s, baseURL1)
 	fmt.Println(err)
 	//Output:field 'f' want type 'int' but 'float64'
 }
@@ -230,7 +235,87 @@ func ExampleMapToStruct2() {
 		Base
 		F []int
 	}
-	err = rest.mapToStruct(map[string]interface{}{"f": []int{1, 2, 3}}, &s)
+	err = rest.mapToStruct(map[string]interface{}{"f": []int{1, 2, 3}}, &s, baseURL1)
 	fmt.Println(s.F)
 	//Output:[1 2 3]
+}
+func ExampleMapToStruct3() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	session := Dial(ms, "rest_test")
+	session.DefType(S{})
+	rest := session.(*rest)
+	var s struct {
+		Base
+		F int
+	}
+	err = rest.mapToStruct(map[string]interface{}{"f": uint(1)}, &s, baseURL1)
+	fmt.Println(err)
+	//Output:field 'f' want type 'int' but 'uint'
+}
+func ExampleMapToStruct4() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	session := Dial(ms, "rest_test")
+	session.DefType(S{})
+	rest := session.(*rest)
+	var s struct {
+		Base
+		U1 url.URL
+		U2 url.URL
+	}
+	u1 := "http://efg.com/abc?a=b"
+	u2 := "http://abc.com/xyz?c=d"
+	err = rest.mapToStruct(map[string]interface{}{"u1": u1, "u2": u2}, &s, baseURL1)
+	fmt.Println(s.U1.String())
+	fmt.Println(s.U2.String())
+	//Output:http://efg.com/abc?a=b
+	///xyz?c=d
+}
+func ExampleStructToMap() {
+	id1 := bson.ObjectIdHex("513063ef69ca944b1000000a")
+	tm1, _ := time.Parse(time.RFC3339, "2013-03-01T08:16:47Z")
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	session := Dial(ms, "rest_test")
+	session.DefType(S{})
+	rest := session.(*rest)
+	var s struct {
+		Base
+		F  int
+		S  SS
+		U1 url.URL
+		U2 url.URL
+	}
+	s.id = id1
+	s.mt = tm1
+	s.ct = tm1
+	s.t = "S"
+	s.loaded = true
+	s.F = 100
+	s.S.id = id1
+	s.S.t = "SS"
+	u1, _ := url.Parse("http://efg.com/abc?a=b")
+	u2, _ := url.Parse("/xyz?c=d")
+	s.U1 = *u1
+	s.U2 = *u2
+	s.S.loaded = true
+	m := rest.structToMap(&s, baseURL1)
+	fmt.Println(m["self"])
+	fmt.Println(m["s"].(map[string]interface{})["self"])
+	fmt.Println(m["u1"])
+	fmt.Println(m["u2"])
+	//Output:http://abc.com/s/513063ef69ca944b1000000a
+	//http://abc.com/ss/513063ef69ca944b1000000a
+	//http://efg.com/abc?a=b
+	//http://abc.com/xyz?c=d
 }

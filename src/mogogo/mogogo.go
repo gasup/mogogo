@@ -396,6 +396,109 @@ func (r *rest) bsonToStruct(b bson.M, s interface{}) {
 	base.loaded = true
 }
 
+func (r *rest) sliceToMapElem(v reflect.Value, t reflect.Type, baseURL *url.URL) interface{} {
+	ret := make([]interface{}, v.Len(), v.Len())
+	for i := 0; i < len(ret); i++ {
+		ret[i] = r.valueToMapElem(v.Index(i), t.Elem(), baseURL)
+	}
+	return ret
+}
+func (r *rest) structToMapElem(v reflect.Value, t reflect.Type, baseURL *url.URL) interface{} {
+	var ret interface{}
+	if hasBase(t) {
+		base := getBase(v)
+		ret = map[string]interface{}{
+			"id":   base.id.Hex(),
+			"type": strings.ToLower(base.t),
+			"self": base.Self().URLWithBase(baseURL).String(),
+		}
+
+	} else if t == urlType {
+		url := v.Addr().Interface().(*url.URL)
+		if url.Host == "" {
+			url.Scheme = baseURL.Scheme
+			url.Host = baseURL.Host
+		}
+		ret = url.String()
+	} else if t == timeType {
+		tm := v.Interface().(time.Time)
+		ret = tm.Format(time.RFC3339)
+	} else if t == geoType {
+		geo := v.Interface().(Geo)
+		ret = map[string]interface{}{"lon": geo.Lo, "lat": geo.La}
+	} else {
+		panic(fmt.Sprintf("not support struct type %v", t))
+	}
+	return ret
+}
+func (r *rest) valueToMapElem(v reflect.Value, t reflect.Type, baseURL *url.URL) interface{} {
+	var ret interface{}
+	switch t.Kind() {
+	case reflect.String:
+		fallthrough
+	case reflect.Bool:
+		fallthrough
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		fallthrough
+	case reflect.Float32, reflect.Float64:
+		ret = v.Interface()
+	case reflect.Slice:
+		ret = r.sliceToMapElem(v, t, baseURL)
+	case reflect.Struct:
+		ret = r.structToMapElem(v, t, baseURL)
+	default:
+		panic(fmt.Sprintf("not support type: '%v'", t))
+	}
+	return ret
+}
+func (r *rest) structToMap(s interface{}, baseURL *url.URL) map[string]interface{} {
+	ret := make(map[string]interface{})
+	sv := reflect.ValueOf(s).Elem()
+	st := sv.Type()
+	if hasBase(st) {
+		base := getBase(sv)
+		if !base.loaded {
+			panic("struct not loaded")
+		}
+		if base.id != "" {
+			ret["id"] = base.id.Hex()
+			ret["self"] = base.Self().URLWithBase(baseURL).String()
+			ret["type"] = base.t
+			if base.mt.IsZero() {
+				panic("modifiy time not set")
+			}
+			if base.ct.IsZero() {
+				panic("create time not set")
+			}
+			ret["mt"] = base.mt.Format(time.RFC3339)
+			ret["ct"] = base.ct.Format(time.RFC3339)
+		}
+	}
+	for i := 0; i < st.NumField(); i++ {
+		sf := st.Field(i)
+		key := strings.ToLower(sf.Name)
+		if sf.Anonymous && sf.Type == baseType {
+			continue
+		}
+		fv := sv.Field(i)
+		if sf.Type.Kind() == reflect.Ptr {
+			if !fv.IsNil() {
+				ret[key] = r.valueToMapElem(fv.Elem(), sf.Type.Elem(), baseURL)
+			}
+		} else if sf.Type.Kind() == reflect.Slice {
+			if !fv.IsNil() {
+				ret[key] = r.valueToMapElem(fv, sf.Type, baseURL)
+			} else {
+				ret[key] = make([]interface{}, 0)
+			}
+		} else {
+			ret[key] = r.valueToMapElem(fv, sf.Type, baseURL)
+		}
+
+	}
+	return ret
+
+}
 func (r *rest) sliceToBsonElem(v reflect.Value, t reflect.Type) interface{} {
 	ret := make([]interface{}, v.Len(), v.Len())
 	for i := 0; i < len(ret); i++ {
@@ -450,10 +553,10 @@ func (r *rest) structToBson(s interface{}) bson.M {
 	if base.id != "" {
 		ret["_id"] = base.id
 		if base.mt.IsZero() {
-			panic("modifiy time is zero")
+			panic("modifiy time not set")
 		}
 		if base.ct.IsZero() {
-			panic("create time is zero")
+			panic("create time not set")
 		}
 		ret["mt"] = base.mt
 		ret["ct"] = base.ct
@@ -483,11 +586,11 @@ func (r *rest) structToBson(s interface{}) bson.M {
 	return ret
 
 }
-func (r *rest) mapElemToSlice(v reflect.Value, t reflect.Type, key string) (reflect.Value, error) {
+func (r *rest) mapElemToSlice(v reflect.Value, t reflect.Type, key string, baseURL *url.URL) (reflect.Value, error) {
 	ret := reflect.MakeSlice(t, v.Len(), v.Len())
 	for i := 0; i < ret.Len(); i++ {
 		ki := fmt.Sprintf("%s[%d]", key, i)
-		val, err := r.mapElemToValue(v.Index(i), t.Elem(), ki)
+		val, err := r.mapElemToValue(v.Index(i), t.Elem(), ki, baseURL)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -500,22 +603,31 @@ func (r *rest) mapElemToSlice(v reflect.Value, t reflect.Type, key string) (refl
 }
 func (r *rest) mapElemToBase(v reflect.Value, t reflect.Type, key string) (reflect.Value, error) {
 	var ret reflect.Value
-	hexId, ok := v.Interface().(string)
+	msg := fmt.Sprintf("field '%s' want {id: objectId}", key)
+	obj, ok := v.Interface().(map[string]interface{})
 	if !ok {
-		return ret, typeError(key, t, v.Type())
+		return ret, &Error{Code: BadRequest, Msg: msg}
+	}
+	idi, ok := obj["id"]
+	if !ok {
+		return ret, &Error{Code: BadRequest, Msg: msg}
+	}
+	hexId, ok := idi.(string)
+	if !ok {
+		return ret, &Error{Code: BadRequest, Msg: msg}
 	}
 	id, err := parseObjectId(hexId)
 	if err != nil {
-		return ret, &Error{Code: BadRequest, Msg: "field '" + key + "' parse error", Err: err}
+		return ret, &Error{Code: BadRequest, Msg: "field '" + key + "'.id parse error", Err: err}
 	}
 	s, err := r.newWithObjectId(t, id)
 	if err != nil {
-		return ret, &Error{Code: BadRequest, Msg: "field '" + key + "'", Err: err}
+		return ret, &Error{Code: BadRequest, Msg: "field '" + key + "'.id", Err: err}
 	}
 	ret = reflect.ValueOf(s).Elem()
 	return ret, nil
 }
-func (r *rest) mapElemToURL(v reflect.Value, t reflect.Type, key string) (reflect.Value, error) {
+func (r *rest) mapElemToURL(v reflect.Value, t reflect.Type, key string, baseURL *url.URL) (reflect.Value, error) {
 	var ret reflect.Value
 	s, ok := v.Interface().(string)
 	if !ok {
@@ -524,6 +636,10 @@ func (r *rest) mapElemToURL(v reflect.Value, t reflect.Type, key string) (reflec
 	u, err := url.ParseRequestURI(s)
 	if err != nil {
 		return ret, &Error{Code: BadRequest, Msg: "field '" + key + "' parse error", Err: err}
+	}
+	if u.Scheme == baseURL.Scheme && u.Host == baseURL.Host {
+		u.Scheme = ""
+		u.Host = ""
 	}
 	ret = reflect.ValueOf(*u)
 	return ret, nil
@@ -543,26 +659,26 @@ func (r *rest) mapElemToTime(v reflect.Value, t reflect.Type, key string) (refle
 }
 func (r *rest) mapElemToGeo(v reflect.Value, t reflect.Type, key string) (reflect.Value, error) {
 	var ret reflect.Value
-	msg := fmt.Sprintf("field '%s' want {la:float, lo:float}", key)
+	msg := fmt.Sprintf("field '%s' want {lat:float, lon:float}", key)
 	geomap, ok := v.Interface().(map[string]interface{})
 	if !ok {
 		return ret, &Error{Code: BadRequest, Msg: msg}
 	}
-	lon, lonOk := geomap["lo"].(float64)
-	lat, latOk := geomap["la"].(float64)
+	lon, lonOk := geomap["lon"].(float64)
+	lat, latOk := geomap["lat"].(float64)
 	if !lonOk || !latOk {
 		return ret, &Error{Code: BadRequest, Msg: msg}
 	}
 	ret = reflect.ValueOf(Geo{La: lat, Lo: lon})
 	return ret, nil
 }
-func (r *rest) mapElemToStruct(v reflect.Value, t reflect.Type, key string) (reflect.Value, error) {
+func (r *rest) mapElemToStruct(v reflect.Value, t reflect.Type, key string, baseURL *url.URL) (reflect.Value, error) {
 	var ret reflect.Value
 	var err error = nil
 	if hasBase(t) {
 		ret, err = r.mapElemToBase(v, t, key)
 	} else if t == urlType {
-		ret, err = r.mapElemToURL(v, t, key)
+		ret, err = r.mapElemToURL(v, t, key, baseURL)
 	} else if t == timeType {
 		ret, err = r.mapElemToTime(v, t, key)
 	} else if t == geoType {
@@ -623,7 +739,7 @@ func typeError(key string, want, but reflect.Type) error {
 	return &Error{Code: BadRequest, Msg: msg}
 }
 
-func (r *rest) mapElemToValue(v reflect.Value, t reflect.Type, key string) (reflect.Value, error) {
+func (r *rest) mapElemToValue(v reflect.Value, t reflect.Type, key string, baseURL *url.URL) (reflect.Value, error) {
 	var ret reflect.Value
 	var err error
 	switch t.Kind() {
@@ -656,9 +772,9 @@ func (r *rest) mapElemToValue(v reflect.Value, t reflect.Type, key string) (refl
 		}
 		ret.SetFloat(f)
 	case reflect.Slice:
-		ret, err = r.mapElemToSlice(v, t, key)
+		ret, err = r.mapElemToSlice(v, t, key, baseURL)
 	case reflect.Struct:
-		ret, err = r.mapElemToStruct(v, t, key)
+		ret, err = r.mapElemToStruct(v, t, key, baseURL)
 	default:
 		msg := fmt.Sprintf("field '%s' type '%s' not support'", key, t.Name())
 		return ret, &Error{Code: BadRequest, Msg: msg}
@@ -702,12 +818,15 @@ func (r *rest) mapToBase(m map[string]interface{}, b *Base) error {
 	}
 	return nil
 }
-func (r *rest) mapToStruct(m map[string]interface{}, s interface{}) error {
+func (r *rest) mapToStruct(m map[string]interface{}, s interface{}, baseURL *url.URL) error {
 	v := reflect.ValueOf(s).Elem()
 	t := v.Type()
-	base := getBase(v)
-	if err := r.mapToBase(m, base); err != nil {
-		return err
+	var base *Base
+	if hasBase(t) {
+		base = getBase(v)
+		if err := r.mapToBase(m, base); err != nil {
+			return err
+		}
 	}
 	for i := 0; i < t.NumField(); i++ {
 		sf := t.Field(i)
@@ -721,14 +840,14 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}) error {
 		elem := m[key]
 		if sf.Type.Kind() == reflect.Ptr {
 			if elem != nil {
-				v, err = r.mapElemToValue(reflect.ValueOf(elem), sf.Type.Elem(), key)
+				v, err = r.mapElemToValue(reflect.ValueOf(elem), sf.Type.Elem(), key, baseURL)
 				if err == nil {
 					v = v.Addr()
 				}
 			}
 		} else if sf.Type.Kind() == reflect.Slice {
 			if elem != nil {
-				v, err = r.mapElemToValue(reflect.ValueOf(elem), sf.Type, key)
+				v, err = r.mapElemToValue(reflect.ValueOf(elem), sf.Type, key, baseURL)
 			} else {
 				v = reflect.MakeSlice(sf.Type, 0, 0)
 			}
@@ -737,7 +856,7 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}) error {
 				msg := fmt.Sprintf("field '%s' not set", key)
 				err = &Error{Code: BadRequest, Msg: msg}
 			}
-			v, err = r.mapElemToValue(reflect.ValueOf(elem), sf.Type, key)
+			v, err = r.mapElemToValue(reflect.ValueOf(elem), sf.Type, key, baseURL)
 		}
 		if err != nil {
 			return err
@@ -746,7 +865,10 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}) error {
 			fv.Set(v)
 		}
 	}
-	base.loaded = true
+	if base != nil {
+		base.t = t.Name()
+		base.loaded = true
+	}
 	return nil
 }
 func (r *rest) Bind(name string, typ string, query string, fields []string) {
@@ -1013,14 +1135,6 @@ func (res *resource) requestToBody(req interface{}) (body interface{}, err error
 	requestType := reflect.TypeOf(req)
 	if requestType.Kind() == reflect.Ptr && requestType.Elem() == defRequestType {
 		body, err = req, nil
-	} else if m, ok := req.(map[string]interface{}); ok {
-		b := reflect.New(defRequestType).Interface()
-		err = res.r.mapToStruct(m, b)
-		if err == nil {
-			body = b
-		} else {
-			body = nil
-		}
 	} else {
 		panic(fmt.Sprintf("not support request type: %v", requestType))
 	}

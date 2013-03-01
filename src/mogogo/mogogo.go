@@ -816,6 +816,7 @@ func (r *rest) mapToBase(m map[string]interface{}, b *Base) error {
 	if b.mt, err = time.Parse(time.RFC3339, mt); err != nil {
 		return &Error{Code: BadRequest, Msg: "field 'mt' parse error", Err: err}
 	}
+	b.r = r
 	return nil
 }
 func (r *rest) mapToStruct(m map[string]interface{}, s interface{}, baseURL *url.URL) error {
@@ -827,6 +828,7 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}, baseURL *url
 		if err := r.mapToBase(m, base); err != nil {
 			return err
 		}
+		base.t = t.Name()
 	}
 	for i := 0; i < t.NumField(); i++ {
 		sf := t.Field(i)
@@ -866,7 +868,6 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}, baseURL *url
 		}
 	}
 	if base != nil {
-		base.t = t.Name()
 		base.loaded = true
 	}
 	return nil

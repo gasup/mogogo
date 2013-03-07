@@ -214,7 +214,7 @@ type Patchable interface {
 type CustomQuery struct {
 	RequestType  string
 	ResponseType string
-	ElemType     []string
+	PathSegmentsType     []string
 	Handler      interface{}
 }
 
@@ -253,6 +253,7 @@ type Iter interface {
 	Slice() (slice Slice, err error)
 }
 type Resource interface {
+	NewRequest() interface{} 
 	Get() (result interface{}, err error)
 	Put(request interface{}) (response interface{}, err error)
 	Delete() (response interface{}, err error)
@@ -996,7 +997,7 @@ func (h *fqHandler) Patch(req *Req, ctx *Context) (result interface{}, err error
 	panic("Not Implement")
 }
 
-func (r *rest) fieldsToElemType(t reflect.Type, fields []string) []string {
+func (r *rest) fieldsToPathSegmentsType(t reflect.Type, fields []string) []string {
 	ret := make([]string, 0)
 	for _, field := range fields {
 		if field == "Id" {
@@ -1004,11 +1005,11 @@ func (r *rest) fieldsToElemType(t reflect.Type, fields []string) []string {
 			continue
 		}
 		if field == "CT" || field == "MT" {
-			panic(fmt.Sprintf("elem type not support type '%s'", "time.Time"))
+			panic(fmt.Sprintf("segment type not support type '%s'", "time.Time"))
 		}
 		sf, ok := t.FieldByName(field)
 		if !ok {
-			panic(fmt.Sprintf("field '%s' not set in '%s'", field, t.Name()))
+			panic(fmt.Sprintf("field '%s' not in '%s'", field, t.Name()))
 		}
 		ft := sf.Type
 		if ft.Kind() == reflect.Ptr {
@@ -1026,7 +1027,7 @@ func (r *rest) fieldsToElemType(t reflect.Type, fields []string) []string {
 			r.checkHasBase(ft.Name())
 			ret = append(ret, ft.Name())
 		default:
-			panic(fmt.Sprintf("elem type not support type '%v'", ft))
+			panic(fmt.Sprintf("segment type not support type '%v'", ft))
 		}
 
 	}
@@ -1035,16 +1036,17 @@ func (r *rest) fieldsToElemType(t reflect.Type, fields []string) []string {
 func (r *rest) defFieldQuery(name string, fq FieldQuery) {
 	r.checkType(fq.Type)
 	h := newFQHandler(r, &fq)
-	elemtype := r.fieldsToElemType(r.types[fq.Type], fq.Fields)
-	cq := CustomQuery{fq.Type, fq.Type, elemtype, h}
+	h.ensureIndex()
+	segtype := r.fieldsToPathSegmentsType(r.types[fq.Type], fq.Fields)
+	cq := CustomQuery{fq.Type, fq.Type, segtype, h}
 	r.defCustomQuery(name, cq)
 }
 func (r *rest) defSelectorQuery(name string, sq SelectorQuery) {
 	r.checkType(sq.ResponseType)
 	panic("Not Implement")
 }
-func (r *rest) checkElemType(elemtype []string) {
-	for _, e := range elemtype {
+func (r *rest) checkPathSegmentsType(segtype []string) {
+	for _, e := range segtype {
 		if r.typeDefined(e) {
 			continue
 		}
@@ -1058,7 +1060,7 @@ func (r *rest) checkElemType(elemtype []string) {
 func (r *rest) defCustomQuery(name string, cq CustomQuery) {
 	r.checkType(cq.RequestType)
 	r.checkType(cq.ResponseType)
-	r.checkElemType(cq.ElemType)
+	r.checkPathSegmentsType(cq.PathSegmentsType)
 	if cq.Handler == nil {
 		panic("Handler can't be nil")
 	}
@@ -1218,7 +1220,9 @@ func (res *resource) Patch(request interface{}) (response interface{}, err error
 	res.checkResponse(response, err)
 	return
 }
-
+func (res *resource) NewRequest() interface{} {
+	return reflect.New(res.r.types[res.cq.RequestType]).Interface()
+}
 func (r *rest) queryRes(cq *CustomQuery, uri *URI, ctx *Context) (res Resource, err error) {
 	return &resource{cq, uri, ctx, r}, nil
 }
@@ -1232,3 +1236,4 @@ func (r *rest) R(uri *URI, ctx *Context) (res Resource, err error) {
 	}
 	return nil, &Error{Code: NotFound, Msg: uri.String()}
 }
+

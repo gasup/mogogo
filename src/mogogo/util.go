@@ -65,15 +65,15 @@ type URI struct {
 	QueryParams map[string]string
 }
 
-func (uri *URI) NumElem() int {
+func (uri *URI) NumSegment() int {
 	return len(uri.path) - 1
 }
-func (uri *URI) Elem(index int) (val interface{}, err error) {
-	if index < 0 || index >= uri.NumElem() {
+func (uri *URI) Segment(index int) (val interface{}, err error) {
+	if index < 0 || index >= uri.NumSegment() {
 		panic(fmt.Sprintln("index out of bound: %d", index))
 	}
 	cq := uri.r.queries[uri.path[0]]
-	typ := cq.ElemType[index]
+	typ := cq.PathSegmentsType[index]
 	elem := uri.path[index+1]
 	switch typ {
 	case "int":

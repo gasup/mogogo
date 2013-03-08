@@ -950,7 +950,6 @@ func (r *rest) Def(name string, def interface{}) {
 		panic(fmt.Sprintf("unknown query type: %v", reflect.TypeOf(def)))
 	}
 }
-
 type fqHandler struct {
 	r  *rest
 	fq *FieldQuery
@@ -958,6 +957,95 @@ type fqHandler struct {
 
 func newFQHandler(r *rest, fq *FieldQuery) *fqHandler {
 	return &fqHandler{r, fq}
+}
+func setFieldValue(sv reflect.Value, f string, v reflect.Value) error {
+	if f != "Id" {
+		fv := sv.FieldByName(f)
+		if !fv.IsValid() {
+			panic(fmt.Sprintf("field '%s' not in '%s'", f, sv.Type().Name()))
+		}
+		if fv.Kind() == reflect.Ptr {
+			if v.Kind() == reflect.Ptr {
+				fv.Set(v)
+			} else {
+				ptr := reflect.New(v.Type())
+				ptr.Elem().Set(v)
+				fv.Set(ptr)
+			}
+
+		} else {
+			if v.Kind() == reflect.Ptr {
+				fv.Set(v.Elem())
+			} else {
+				fv.Set(v)
+			}
+		}
+	} else {
+
+		getBase(sv).id = getBase(v.Elem()).id
+	}
+	return nil
+}
+
+func (h *fqHandler) setStructFields(s interface{}, req *Req, ctx *Context) error {
+	sv := reflect.ValueOf(s).Elem()
+	for i, f := range h.fq.Fields {
+		seg, err := req.Segment(i)
+		if err != nil {
+			return err
+		}
+		segv := reflect.ValueOf(seg)
+		err = setFieldValue(sv, f, segv)
+		if err != nil {
+			return err
+		}
+	}
+	for f, ctxkey := range h.fq.ContextRef {
+		c, ok := ctx.Get(ctxkey)
+		if !ok {
+			msg := fmt.Sprintf("'%s' not in Context", ctxkey)
+			return &Error{Code:Unauthorized, Msg:msg}
+		}
+		err := setFieldValue(sv, f, reflect.ValueOf(c))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func setBsonValue(b bson.M, f string, v reflect.Value) {
+	if f != "Id" {
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+		if v.Kind() != reflect.Struct {
+			b[f] = v.Interface()
+		} else {
+			b[f] = getBase(v).id
+		}
+	} else {
+		b["_id"] = getBase(v.Elem()).id
+	}
+}
+func (h *fqHandler) query(req *Req, ctx *Context) (bson.M, error) {
+	ret := make(bson.M)
+	for i, f := range h.fq.Fields {
+		seg, err := req.Segment(i)
+		if err != nil {
+			return nil, err
+		}
+		segv := reflect.ValueOf(seg)
+		setBsonValue(ret, f, segv)
+	}
+	for f, ctxkey := range h.fq.ContextRef {
+		c, ok := ctx.Get(ctxkey)
+		if !ok {
+			msg := fmt.Sprintf("'%s' not in Context", ctxkey)
+			return nil, &Error{Code:Unauthorized, Msg:msg}
+		}
+		setBsonValue(ret, f, reflect.ValueOf(c))
+	}
+	return ret, nil
 }
 func (h *fqHandler) ensureIndex() {
 	fields := h.fq.Fields

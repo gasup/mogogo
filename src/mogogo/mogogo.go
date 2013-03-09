@@ -222,14 +222,13 @@ type CustomQuery struct {
 }
 
 type Context struct {
+	r *rest
+	s *mgo.Session
 	Sys    bool
 	values map[string]interface{}
 	newval bool
 }
 
-func NewContext() *Context {
-	return &Context{values:make(map[string]interface{})}
-}
 
 func (ctx *Context) Get(key string) (val interface{}, ok bool) {
 	val, ok = ctx.values[key]
@@ -239,6 +238,19 @@ func (ctx *Context) Set(key string, val interface{}) {
 	ctx.newval = true
 	ctx.values[key] = val
 }
+
+func (ctx *Context) Close() {
+	ctx.s.Close()
+	ctx.s = nil
+}
+
+func (ctx *Context) coll(typ string) *mgo.Collection {
+	if ctx.s == nil {
+		panic("context closed")
+	}
+	return ctx.s.DB(ctx.r.db).C(strings.ToLower(typ))
+}
+
 
 type Req struct {
 	*URI
@@ -271,6 +283,7 @@ type Resource interface {
 }
 
 type Session interface {
+	NewContext() *Context
 	DefType(def interface{})
 	Def(name string, def interface{})
 	Bind(name string, typ string, query string, fields []string)
@@ -303,8 +316,8 @@ type rest struct {
 	binds   map[string]map[string]*bind
 }
 
-func (r *rest) coll(typ string) *mgo.Collection {
-	return r.s.DB(r.db).C(strings.ToLower(typ))
+func (r *rest) NewContext() *Context {
+	return &Context{r:r, s:r.s.Copy(), values:make(map[string]interface{})}
 }
 
 
@@ -1099,8 +1112,8 @@ func (h *fqHandler) ensureIndex() {
 		h.r.Index(h.fq.Type, idx)
 	}
 }
-func (h *fqHandler) coll() *mgo.Collection {
-	return h.r.coll(strings.ToLower(h.fq.Type))
+func (h *fqHandler) coll(ctx *Context) *mgo.Collection {
+	return ctx.coll(h.fq.Type)
 }
 func (h *fqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) {
 	if h.fq.Allow & GET == 0 {
@@ -1122,7 +1135,7 @@ func (h *fqHandler) Delete(req *Req, ctx *Context) (result interface{}, err erro
 	if err != nil {
 		return nil, err
 	}
-	_, err = h.coll().RemoveAll(q)
+	_, err = h.coll(ctx).RemoveAll(q)
 	return nil, err
 }
 func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error) {
@@ -1141,7 +1154,7 @@ func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error)
 	base.loaded = true
 	base.r = h.r
 	b := h.r.structToBson(body)
-	err = h.coll().Insert(b)
+	err = h.coll(ctx).Insert(b)
 	if err != nil {
 		lasterr := err.(*mgo.LastError)
 		if lasterr.Code == 11000  {

@@ -337,7 +337,8 @@ func ExampleFieldQueryPost1() {
 		Type: "SS",
 		Allow: POST,
 	})
-	ctx := NewContext()
+	ctx := s.NewContext()
+	defer ctx.Close()
 	uri, err := URIParse("/test-ss")
 	if err != nil {
 		panic(err)
@@ -386,7 +387,8 @@ func ExampleFieldQueryPost2() {
 			"S3":"CS3",
 		},
 	})
-	ctx := NewContext()
+	ctx := s.NewContext()
+	defer ctx.Close()
 	ctx.Set("CB1", true)
 	ss, err := rest.newWithObjectId(reflect.TypeOf(SS{}), bson.ObjectIdHex("513b090869ca940ef500000b"))
 	if err != nil {
@@ -444,7 +446,8 @@ func ExampleFieldQueryDelete1() {
 			"S3":"CS3",
 		},
 	})
-	ctx := NewContext()
+	ctx := s.NewContext()
+	defer ctx.Close()
 	ctx.Set("CB1", true)
 	ss, err := rest.newWithObjectId(reflect.TypeOf(SS{}), bson.ObjectIdHex("513b090869ca940ef500000b"))
 	if err != nil {

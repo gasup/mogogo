@@ -5,9 +5,9 @@ import (
 	"labix.org/v2/mgo"
 	"labix.org/v2/mgo/bson"
 	"net/url"
+	"reflect"
 	"testing"
 	"time"
-	"reflect"
 )
 
 func TestREST1(t *testing.T) {
@@ -327,14 +327,14 @@ func ExampleFieldQueryPost1() {
 		panic(err)
 	}
 	defer ms.Close()
-	//err = ms.DB("rest_test").DropDatabase()
-	//if err != nil {
-	//	panic(err)
-	//}
+	err = ms.DB("rest_test").C("ss").DropCollection()
+	if err != nil {
+		panic(err)
+	}
 	s := Dial(ms, "rest_test")
 	s.DefType(SS{})
 	s.Def("test-ss", FieldQuery{
-		Type: "SS",
+		Type:  "SS",
 		Allow: POST,
 	})
 	ctx := s.NewContext()
@@ -343,7 +343,7 @@ func ExampleFieldQueryPost1() {
 	if err != nil {
 		panic(err)
 	}
-	data := SS{S1:"Hello World"}
+	data := SS{S1: "Hello World"}
 	r, err := s.R(uri, ctx)
 	if err != nil {
 		panic(err)
@@ -355,6 +355,7 @@ func ExampleFieldQueryPost1() {
 	fmt.Println(resp.(*SS).S1)
 	//Output:Hello World
 }
+
 type SSS struct {
 	Base
 	S1 string
@@ -363,28 +364,29 @@ type SSS struct {
 	S2 SS
 	S3 *SS
 }
+
 func ExampleFieldQueryPost2() {
 	ms, err := mgo.Dial("localhost")
 	if err != nil {
 		panic(err)
 	}
 	defer ms.Close()
-	//err = ms.DB("rest_test").DropDatabase()
-	//if err != nil {
-	//	panic(err)
-	//}
+	err = ms.DB("rest_test").C("sss").DropCollection()
+	if err != nil {
+		panic(err)
+	}
 	s := Dial(ms, "rest_test")
 	rest := s.(*rest)
 	s.DefType(SS{})
 	s.DefType(SSS{})
 	s.Def("test-sss", FieldQuery{
-		Type: "SSS",
-		Allow: POST,
+		Type:   "SSS",
+		Allow:  POST,
 		Fields: []string{"S1", "I1"},
 		ContextRef: map[string]string{
-			"B1":"CB1",
-			"S2":"CS2",
-			"S3":"CS3",
+			"B1": "CB1",
+			"S2": "CS2",
+			"S3": "CS3",
 		},
 	})
 	ctx := s.NewContext()
@@ -400,7 +402,7 @@ func ExampleFieldQueryPost2() {
 	if err != nil {
 		panic(err)
 	}
-	data := SSS{S1:"Hello World"}
+	data := SSS{S1: "Hello World"}
 	r, err := s.R(uri, ctx)
 	if err != nil {
 		panic(err)
@@ -428,22 +430,22 @@ func ExampleFieldQueryDelete1() {
 		panic(err)
 	}
 	defer ms.Close()
-	//err = ms.DB("rest_test").DropDatabase()
-	//if err != nil {
-	//	panic(err)
-	//}
+	err = ms.DB("rest_test").C("sss").DropCollection()
+	if err != nil {
+		panic(err)
+	}
 	s := Dial(ms, "rest_test")
 	rest := s.(*rest)
 	s.DefType(SS{})
 	s.DefType(SSS{})
 	s.Def("test-sss", FieldQuery{
-		Type: "SSS",
-		Allow: POST | DELETE,
+		Type:   "SSS",
+		Allow:  POST | DELETE,
 		Fields: []string{"S1", "I1"},
 		ContextRef: map[string]string{
-			"B1":"CB1",
-			"S2":"CS2",
-			"S3":"CS3",
+			"B1": "CB1",
+			"S2": "CS2",
+			"S3": "CS3",
 		},
 	})
 	ctx := s.NewContext()
@@ -459,12 +461,67 @@ func ExampleFieldQueryDelete1() {
 	if err != nil {
 		panic(err)
 	}
-	data := SSS{S1:"Hello World"}
+	data := SSS{S1: "Hello World"}
 	r, err := s.R(uri, ctx)
 	if err != nil {
 		panic(err)
 	}
 	resp, err := r.Post(&data)
+	if err != nil {
+		panic(err)
+	}
+	resp, err = r.Delete()
+	fmt.Println(resp, err)
+	//Output:<nil> <nil>
+}
+func ExampleFieldQueryPut1() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	err = ms.DB("rest_test").C("sss").DropCollection()
+	if err != nil {
+		panic(err)
+	}
+	s := Dial(ms, "rest_test")
+	rest := s.(*rest)
+	s.DefType(SS{})
+	s.DefType(SSS{})
+	s.Def("test-sss", FieldQuery{
+		Type:   "SSS",
+		Allow:  PUT | DELETE,
+		Fields: []string{"S1", "I1"},
+		ContextRef: map[string]string{
+			"B1": "CB1",
+			"S2": "CS2",
+			"S3": "CS3",
+		},
+		Unique: true,
+	})
+	ctx := s.NewContext()
+	defer ctx.Close()
+	ctx.Set("CB1", true)
+	ss, err := rest.newWithObjectId(reflect.TypeOf(SS{}), bson.ObjectIdHex("513b090869ca940ef500000b"))
+	if err != nil {
+		panic(err)
+	}
+	ctx.Set("CS2", ss)
+	ctx.Set("CS3", ss)
+	uri, err := URIParse("/test-sss/hello-world/456")
+	if err != nil {
+		panic(err)
+	}
+	data := SSS{S1: "Hello World"}
+	r, err := s.R(uri, ctx)
+	if err != nil {
+		panic(err)
+	}
+	resp, err := r.Put(&data)
+	if err != nil {
+		panic(err)
+	}
+	resp, err = r.Put(resp)
 	if err != nil {
 		panic(err)
 	}

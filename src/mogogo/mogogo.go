@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/url"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 )
@@ -15,12 +16,12 @@ type ErrorCode uint
 
 //Same As HTTP Status
 const (
-	BadRequest       = 400
-	Forbidden        = 403
-	Unauthorized     = 401
-	NotFound         = 404
-	MethodNotAllowed = 405
-	Conflict         = 409
+	BadRequest          = 400
+	Forbidden           = 403
+	Unauthorized        = 401
+	NotFound            = 404
+	MethodNotAllowed    = 405
+	Conflict            = 409
 	InternalServerError = 500
 )
 
@@ -215,20 +216,19 @@ type Patchable interface {
 
 //Custom Query
 type CustomQuery struct {
-	RequestType  string
-	ResponseType string
-	PathSegmentsType     []string
-	Handler      interface{}
+	RequestType      string
+	ResponseType     string
+	PathSegmentsType []string
+	Handler          interface{}
 }
 
 type Context struct {
-	r *rest
-	s *mgo.Session
+	r      *rest
+	s      *mgo.Session
 	Sys    bool
 	values map[string]interface{}
 	newval bool
 }
-
 
 func (ctx *Context) Get(key string) (val interface{}, ok bool) {
 	val, ok = ctx.values[key]
@@ -250,7 +250,6 @@ func (ctx *Context) coll(typ string) *mgo.Collection {
 	}
 	return ctx.s.DB(ctx.r.db).C(strings.ToLower(typ))
 }
-
 
 type Req struct {
 	*URI
@@ -274,7 +273,7 @@ type Iter interface {
 	Slice() (slice Slice, err error)
 }
 type Resource interface {
-	NewRequest() interface{} 
+	NewRequest() interface{}
 	Get() (result interface{}, err error)
 	Put(request interface{}) (response interface{}, err error)
 	Delete() (response interface{}, err error)
@@ -317,10 +316,8 @@ type rest struct {
 }
 
 func (r *rest) NewContext() *Context {
-	return &Context{r:r, s:r.s.Copy(), values:make(map[string]interface{})}
+	return &Context{r: r, s: r.s.Copy(), values: make(map[string]interface{})}
 }
-
-
 
 type bind struct {
 	query  string
@@ -979,6 +976,7 @@ func (r *rest) Def(name string, def interface{}) {
 		panic(fmt.Sprintf("unknown query type: %v", reflect.TypeOf(def)))
 	}
 }
+
 type fqHandler struct {
 	r  *rest
 	fq *FieldQuery
@@ -1036,7 +1034,7 @@ func (h *fqHandler) setStructFields(s interface{}, req *Req, ctx *Context) error
 			c, ok := ctx.Get(ctxkey)
 			if !ok {
 				msg := fmt.Sprintf("'%s' not in Context", ctxkey)
-				return &Error{Code:Unauthorized, Msg:msg}
+				return &Error{Code: Unauthorized, Msg: msg}
 			}
 			err := setFieldValue(sv, f, reflect.ValueOf(c))
 			if err != nil {
@@ -1078,7 +1076,7 @@ func (h *fqHandler) query(req *Req, ctx *Context) (bson.M, error) {
 			c, ok := ctx.Get(ctxkey)
 			if !ok {
 				msg := fmt.Sprintf("'%s' not in Context", ctxkey)
-				return nil, &Error{Code:Unauthorized, Msg:msg}
+				return nil, &Error{Code: Unauthorized, Msg: msg}
 			}
 			setBsonValue(ret, f, reflect.ValueOf(c))
 		}
@@ -1091,11 +1089,14 @@ func (h *fqHandler) ensureIndex() {
 		fields = append(fields, h.fq.Fields...)
 	}
 	if h.fq.ContextRef != nil {
+		refFields := make([]string, 0)
 		for f, _ := range h.fq.ContextRef {
 			if _, ok := indexOf(fields, f); !ok {
-				fields = append(fields, f)
+				refFields = append(refFields, f)
 			}
 		}
+		sort.Strings(refFields)
+		fields = append(fields, refFields...)
 	}
 	if !h.fq.Unique {
 		if h.fq.Pull && h.fq.SortFields != nil {
@@ -1116,19 +1117,65 @@ func (h *fqHandler) coll(ctx *Context) *mgo.Collection {
 	return ctx.coll(h.fq.Type)
 }
 func (h *fqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) {
-	if h.fq.Allow & GET == 0 {
+	if h.fq.Allow&GET == 0 {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
 	panic("Not Implement")
 }
 func (h *fqHandler) Put(req *Req, ctx *Context) (result interface{}, err error) {
-	if h.fq.Allow & PUT == 0 {
+	if h.fq.Allow&PUT == 0 {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
-	panic("Not Implement")
+	q, err := h.query(req, ctx)
+	if err != nil {
+		return nil, err
+	}
+	body := req.Body
+	err = h.setStructFields(body, req, ctx)
+	old := make(bson.M)
+	err = h.coll(ctx).Find(q).One(old)
+	if err == mgo.ErrNotFound {
+		base := getBase(reflect.ValueOf(body).Elem())
+		base.id = bson.NewObjectId()
+		base.mt = bson.Now()
+		base.ct = base.mt
+		base.loaded = true
+		base.r = h.r
+		b := h.r.structToBson(body)
+		err = h.coll(ctx).Insert(b)
+		if err != nil {
+			lasterr := err.(*mgo.LastError)
+			if lasterr.Code == 11000 {
+				return nil, &Error{Code: Conflict}
+			} else {
+				return nil, &Error{Code: InternalServerError, Err: err}
+			}
+		}
+	} else if err == nil {
+		base := getBase(reflect.ValueOf(body).Elem())
+		base.id = old["_id"].(bson.ObjectId)
+		base.mt = bson.Now()
+		base.ct = old["ct"].(time.Time)
+		base.loaded = true
+		base.r = h.r
+		b := h.r.structToBson(body)
+		_, err = h.coll(ctx).UpsertId(base.id, b)
+		if err != nil {
+			lasterr := err.(*mgo.LastError)
+			if lasterr.Code == 11000 {
+				return nil, &Error{Code: Conflict}
+			} else {
+				return nil, &Error{Code: InternalServerError, Err: err}
+			}
+		}
+
+	} else {
+		return nil, &Error{Code: InternalServerError, Err: err}
+	}
+	return body, nil
 }
 func (h *fqHandler) Delete(req *Req, ctx *Context) (result interface{}, err error) {
-	if h.fq.Allow & DELETE == 0 {
+	if h.fq.Allow&DELETE == 0 {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
 	q, err := h.query(req, ctx)
@@ -1136,10 +1183,13 @@ func (h *fqHandler) Delete(req *Req, ctx *Context) (result interface{}, err erro
 		return nil, err
 	}
 	_, err = h.coll(ctx).RemoveAll(q)
+	if err != nil {
+		err = &Error{Code: InternalServerError, Err: err}
+	}
 	return nil, err
 }
 func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error) {
-	if h.fq.Allow & POST == 0 {
+	if h.fq.Allow&POST == 0 {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
 	body := req.Body
@@ -1150,17 +1200,17 @@ func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error)
 	base := getBase(reflect.ValueOf(body).Elem())
 	base.id = bson.NewObjectId()
 	base.mt = bson.Now()
-	base.ct = bson.Now()
+	base.ct = base.mt
 	base.loaded = true
 	base.r = h.r
 	b := h.r.structToBson(body)
 	err = h.coll(ctx).Insert(b)
 	if err != nil {
 		lasterr := err.(*mgo.LastError)
-		if lasterr.Code == 11000  {
-			return nil, &Error{Code:Conflict}
+		if lasterr.Code == 11000 {
+			return nil, &Error{Code: Conflict}
 		} else {
-			return nil, &Error{Code:InternalServerError, Err:err}
+			return nil, &Error{Code: InternalServerError, Err: err}
 		}
 	}
 	return body, nil
@@ -1208,8 +1258,14 @@ func (r *rest) fieldsToPathSegmentsType(t reflect.Type, fields []string) []strin
 	}
 	return ret
 }
+func checkFieldQuery(fq *FieldQuery) {
+	if fq.Allow&PUT != 0 && !fq.Unique {
+		panic("PUT only support unique field query")
+	}
+}
 func (r *rest) defFieldQuery(name string, fq FieldQuery) {
 	r.checkType(fq.Type)
+	checkFieldQuery(&fq)
 	h := newFQHandler(r, &fq)
 	h.ensureIndex()
 	segtype := r.fieldsToPathSegmentsType(r.types[fq.Type], fq.Fields)
@@ -1413,4 +1469,3 @@ func (r *rest) R(uri *URI, ctx *Context) (res Resource, err error) {
 	msg := fmt.Sprintf("'%s' not found", uri.String())
 	return nil, &Error{Code: NotFound, Msg: msg}
 }
-

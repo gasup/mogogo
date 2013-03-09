@@ -327,14 +327,15 @@ func ExampleFieldQueryPost1() {
 		panic(err)
 	}
 	defer ms.Close()
-	err = ms.DB("rest_test").DropDatabase()
-	if err != nil {
-		panic(err)
-	}
+	//err = ms.DB("rest_test").DropDatabase()
+	//if err != nil {
+	//	panic(err)
+	//}
 	s := Dial(ms, "rest_test")
 	s.DefType(SS{})
 	s.Def("test-ss", FieldQuery{
 		Type: "SS",
+		Allow: POST,
 	})
 	ctx := NewContext()
 	uri, err := URIParse("/test-ss")
@@ -367,16 +368,17 @@ func ExampleFieldQueryPost2() {
 		panic(err)
 	}
 	defer ms.Close()
-	err = ms.DB("rest_test").DropDatabase()
-	if err != nil {
-		panic(err)
-	}
+	//err = ms.DB("rest_test").DropDatabase()
+	//if err != nil {
+	//	panic(err)
+	//}
 	s := Dial(ms, "rest_test")
 	rest := s.(*rest)
 	s.DefType(SS{})
 	s.DefType(SSS{})
 	s.Def("test-sss", FieldQuery{
 		Type: "SSS",
+		Allow: POST,
 		Fields: []string{"S1", "I1"},
 		ContextRef: map[string]string{
 			"B1":"CB1",
@@ -416,4 +418,54 @@ func ExampleFieldQueryPost2() {
 	//true
 	//513b090869ca940ef500000b
 	//513b090869ca940ef500000b
+}
+
+func ExampleFieldQueryDelete1() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	//err = ms.DB("rest_test").DropDatabase()
+	//if err != nil {
+	//	panic(err)
+	//}
+	s := Dial(ms, "rest_test")
+	rest := s.(*rest)
+	s.DefType(SS{})
+	s.DefType(SSS{})
+	s.Def("test-sss", FieldQuery{
+		Type: "SSS",
+		Allow: POST | DELETE,
+		Fields: []string{"S1", "I1"},
+		ContextRef: map[string]string{
+			"B1":"CB1",
+			"S2":"CS2",
+			"S3":"CS3",
+		},
+	})
+	ctx := NewContext()
+	ctx.Set("CB1", true)
+	ss, err := rest.newWithObjectId(reflect.TypeOf(SS{}), bson.ObjectIdHex("513b090869ca940ef500000b"))
+	if err != nil {
+		panic(err)
+	}
+	ctx.Set("CS2", ss)
+	ctx.Set("CS3", ss)
+	uri, err := URIParse("/test-sss/hello-world/456")
+	if err != nil {
+		panic(err)
+	}
+	data := SSS{S1:"Hello World"}
+	r, err := s.R(uri, ctx)
+	if err != nil {
+		panic(err)
+	}
+	resp, err := r.Post(&data)
+	if err != nil {
+		panic(err)
+	}
+	resp, err = r.Delete()
+	fmt.Println(resp, err)
+	//Output:<nil> <nil>
 }

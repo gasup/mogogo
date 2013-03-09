@@ -1099,16 +1099,36 @@ func (h *fqHandler) ensureIndex() {
 		h.r.Index(h.fq.Type, idx)
 	}
 }
+func (h *fqHandler) coll() *mgo.Collection {
+	return h.r.coll(strings.ToLower(h.fq.Type))
+}
 func (h *fqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) {
+	if h.fq.Allow & GET == 0 {
+		return nil, &Error{Code: MethodNotAllowed}
+	}
 	panic("Not Implement")
 }
 func (h *fqHandler) Put(req *Req, ctx *Context) (result interface{}, err error) {
+	if h.fq.Allow & PUT == 0 {
+		return nil, &Error{Code: MethodNotAllowed}
+	}
 	panic("Not Implement")
 }
 func (h *fqHandler) Delete(req *Req, ctx *Context) (result interface{}, err error) {
-	panic("Not Implement")
+	if h.fq.Allow & DELETE == 0 {
+		return nil, &Error{Code: MethodNotAllowed}
+	}
+	q, err := h.query(req, ctx)
+	if err != nil {
+		return nil, err
+	}
+	_, err = h.coll().RemoveAll(q)
+	return nil, err
 }
 func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error) {
+	if h.fq.Allow & POST == 0 {
+		return nil, &Error{Code: MethodNotAllowed}
+	}
 	body := req.Body
 	err = h.setStructFields(body, req, ctx)
 	if err != nil {
@@ -1121,7 +1141,7 @@ func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error)
 	base.loaded = true
 	base.r = h.r
 	b := h.r.structToBson(body)
-	err = h.r.coll(h.fq.Type).Insert(b)
+	err = h.coll().Insert(b)
 	if err != nil {
 		lasterr := err.(*mgo.LastError)
 		if lasterr.Code == 11000  {
@@ -1287,10 +1307,7 @@ func (res *resource) requestToBody(req interface{}) (body interface{}, err error
 }
 func (res *resource) checkResponse(val interface{}, err error) {
 	responseType := res.r.types[res.cq.ResponseType]
-	if val == nil && err == nil {
-		panic("val and err both nil")
-	}
-	if val == nil && err != nil {
+	if val == nil {
 		return
 	}
 	resultType := reflect.TypeOf(val)

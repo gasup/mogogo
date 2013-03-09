@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"testing"
 	"time"
+	"reflect"
 )
 
 func TestREST1(t *testing.T) {
@@ -318,4 +319,101 @@ func ExampleStructToMap() {
 	//http://abc.com/ss/513063ef69ca944b1000000a
 	//http://efg.com/abc?a=b
 	//http://abc.com/xyz?c=d
+}
+
+func ExampleFieldQueryPost1() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	err = ms.DB("rest_test").DropDatabase()
+	if err != nil {
+		panic(err)
+	}
+	s := Dial(ms, "rest_test")
+	s.DefType(SS{})
+	s.Def("test-ss", FieldQuery{
+		Type: "SS",
+	})
+	ctx := NewContext()
+	uri, err := URIParse("/test-ss")
+	if err != nil {
+		panic(err)
+	}
+	data := SS{S1:"Hello World"}
+	r, err := s.R(uri, ctx)
+	if err != nil {
+		panic(err)
+	}
+	resp, err := r.Post(&data)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(resp.(*SS).S1)
+	//Output:Hello World
+}
+type SSS struct {
+	Base
+	S1 string
+	I1 *int
+	B1 bool
+	S2 SS
+	S3 *SS
+}
+func ExampleFieldQueryPost2() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	err = ms.DB("rest_test").DropDatabase()
+	if err != nil {
+		panic(err)
+	}
+	s := Dial(ms, "rest_test")
+	rest := s.(*rest)
+	s.DefType(SS{})
+	s.DefType(SSS{})
+	s.Def("test-sss", FieldQuery{
+		Type: "SSS",
+		Fields: []string{"S1", "I1"},
+		ContextRef: map[string]string{
+			"B1":"CB1",
+			"S2":"CS2",
+			"S3":"CS3",
+		},
+	})
+	ctx := NewContext()
+	ctx.Set("CB1", true)
+	ss, err := rest.newWithObjectId(reflect.TypeOf(SS{}), bson.ObjectIdHex("513b090869ca940ef500000b"))
+	if err != nil {
+		panic(err)
+	}
+	ctx.Set("CS2", ss)
+	ctx.Set("CS3", ss)
+	uri, err := URIParse("/test-sss/hello-world/123")
+	if err != nil {
+		panic(err)
+	}
+	data := SSS{S1:"Hello World"}
+	r, err := s.R(uri, ctx)
+	if err != nil {
+		panic(err)
+	}
+	resp, err := r.Post(&data)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(resp.(*SSS).S1)
+	fmt.Println(*resp.(*SSS).I1)
+	fmt.Println(resp.(*SSS).B1)
+	fmt.Println(resp.(*SSS).S2.id.Hex())
+	fmt.Println(resp.(*SSS).S3.id.Hex())
+	//Output:hello-world
+	//123
+	//true
+	//513b090869ca940ef500000b
+	//513b090869ca940ef500000b
 }

@@ -21,6 +21,7 @@ const (
 	NotFound         = 404
 	MethodNotAllowed = 405
 	Conflict         = 409
+	InternalServerError = 500
 )
 
 func (es ErrorCode) String() string {
@@ -38,6 +39,8 @@ func (es ErrorCode) String() string {
 		ret = "method not allowed"
 	case Conflict:
 		ret = "conflict"
+	case InternalServerError:
+		ret = "internal server error"
 	default:
 		panic(fmt.Sprintf("invalid errorCode: %d", es))
 	}
@@ -224,11 +227,17 @@ type Context struct {
 	newval bool
 }
 
+func NewContext() *Context {
+	return &Context{values:make(map[string]interface{})}
+}
+
 func (ctx *Context) Get(key string) (val interface{}, ok bool) {
-	panic("Not Implements")
+	val, ok = ctx.values[key]
+	return
 }
 func (ctx *Context) Set(key string, val interface{}) {
-	panic("Not Implements")
+	ctx.newval = true
+	ctx.values[key] = val
 }
 
 type Req struct {
@@ -293,6 +302,12 @@ type rest struct {
 	queries map[string]*CustomQuery
 	binds   map[string]map[string]*bind
 }
+
+func (r *rest) coll(typ string) *mgo.Collection {
+	return r.s.DB(r.db).C(strings.ToLower(typ))
+}
+
+
 
 type bind struct {
 	query  string
@@ -395,6 +410,7 @@ func (r *rest) bsonToStruct(b bson.M, s interface{}) {
 		}
 	}
 	base.loaded = true
+	base.r = r
 }
 
 func (r *rest) sliceToMapElem(v reflect.Value, t reflect.Type, baseURL *url.URL) interface{} {
@@ -989,26 +1005,30 @@ func setFieldValue(sv reflect.Value, f string, v reflect.Value) error {
 
 func (h *fqHandler) setStructFields(s interface{}, req *Req, ctx *Context) error {
 	sv := reflect.ValueOf(s).Elem()
-	for i, f := range h.fq.Fields {
-		seg, err := req.Segment(i)
-		if err != nil {
-			return err
-		}
-		segv := reflect.ValueOf(seg)
-		err = setFieldValue(sv, f, segv)
-		if err != nil {
-			return err
+	if h.fq.Fields != nil {
+		for i, f := range h.fq.Fields {
+			seg, err := req.Segment(i)
+			if err != nil {
+				return err
+			}
+			segv := reflect.ValueOf(seg)
+			err = setFieldValue(sv, f, segv)
+			if err != nil {
+				return err
+			}
 		}
 	}
-	for f, ctxkey := range h.fq.ContextRef {
-		c, ok := ctx.Get(ctxkey)
-		if !ok {
-			msg := fmt.Sprintf("'%s' not in Context", ctxkey)
-			return &Error{Code:Unauthorized, Msg:msg}
-		}
-		err := setFieldValue(sv, f, reflect.ValueOf(c))
-		if err != nil {
-			return err
+	if h.fq.ContextRef != nil {
+		for f, ctxkey := range h.fq.ContextRef {
+			c, ok := ctx.Get(ctxkey)
+			if !ok {
+				msg := fmt.Sprintf("'%s' not in Context", ctxkey)
+				return &Error{Code:Unauthorized, Msg:msg}
+			}
+			err := setFieldValue(sv, f, reflect.ValueOf(c))
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -1018,6 +1038,7 @@ func setBsonValue(b bson.M, f string, v reflect.Value) {
 		if v.Kind() == reflect.Ptr {
 			v = v.Elem()
 		}
+		f = strings.ToLower(f)
 		if v.Kind() != reflect.Struct {
 			b[f] = v.Interface()
 		} else {
@@ -1029,26 +1050,33 @@ func setBsonValue(b bson.M, f string, v reflect.Value) {
 }
 func (h *fqHandler) query(req *Req, ctx *Context) (bson.M, error) {
 	ret := make(bson.M)
-	for i, f := range h.fq.Fields {
-		seg, err := req.Segment(i)
-		if err != nil {
-			return nil, err
+	if h.fq.Fields != nil {
+		for i, f := range h.fq.Fields {
+			seg, err := req.Segment(i)
+			if err != nil {
+				return nil, err
+			}
+			segv := reflect.ValueOf(seg)
+			setBsonValue(ret, f, segv)
 		}
-		segv := reflect.ValueOf(seg)
-		setBsonValue(ret, f, segv)
 	}
-	for f, ctxkey := range h.fq.ContextRef {
-		c, ok := ctx.Get(ctxkey)
-		if !ok {
-			msg := fmt.Sprintf("'%s' not in Context", ctxkey)
-			return nil, &Error{Code:Unauthorized, Msg:msg}
+	if h.fq.ContextRef != nil {
+		for f, ctxkey := range h.fq.ContextRef {
+			c, ok := ctx.Get(ctxkey)
+			if !ok {
+				msg := fmt.Sprintf("'%s' not in Context", ctxkey)
+				return nil, &Error{Code:Unauthorized, Msg:msg}
+			}
+			setBsonValue(ret, f, reflect.ValueOf(c))
 		}
-		setBsonValue(ret, f, reflect.ValueOf(c))
 	}
 	return ret, nil
 }
 func (h *fqHandler) ensureIndex() {
-	fields := h.fq.Fields
+	fields := make([]string, 0)
+	if h.fq.Fields != nil {
+		fields = append(fields, h.fq.Fields...)
+	}
 	if h.fq.ContextRef != nil {
 		for f, _ := range h.fq.ContextRef {
 			if _, ok := indexOf(fields, f); !ok {
@@ -1066,8 +1094,10 @@ func (h *fqHandler) ensureIndex() {
 			fields = append(fields, h.fq.SortFields...)
 		}
 	}
-	idx := I{Fields: fields, Unique: h.fq.Unique}
-	h.r.Index(h.fq.Type, idx)
+	if len(fields) > 0 {
+		idx := I{Fields: fields, Unique: h.fq.Unique}
+		h.r.Index(h.fq.Type, idx)
+	}
 }
 func (h *fqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) {
 	panic("Not Implement")
@@ -1079,7 +1109,28 @@ func (h *fqHandler) Delete(req *Req, ctx *Context) (result interface{}, err erro
 	panic("Not Implement")
 }
 func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error) {
-	panic("Not Implement")
+	body := req.Body
+	err = h.setStructFields(body, req, ctx)
+	if err != nil {
+		return nil, err
+	}
+	base := getBase(reflect.ValueOf(body).Elem())
+	base.id = bson.NewObjectId()
+	base.mt = bson.Now()
+	base.ct = bson.Now()
+	base.loaded = true
+	base.r = h.r
+	b := h.r.structToBson(body)
+	err = h.r.coll(h.fq.Type).Insert(b)
+	if err != nil {
+		lasterr := err.(*mgo.LastError)
+		if lasterr.Code == 11000  {
+			return nil, &Error{Code:Conflict}
+		} else {
+			return nil, &Error{Code:InternalServerError, Err:err}
+		}
+	}
+	return body, nil
 }
 func (h *fqHandler) Patch(req *Req, ctx *Context) (result interface{}, err error) {
 	panic("Not Implement")
@@ -1087,6 +1138,9 @@ func (h *fqHandler) Patch(req *Req, ctx *Context) (result interface{}, err error
 
 func (r *rest) fieldsToPathSegmentsType(t reflect.Type, fields []string) []string {
 	ret := make([]string, 0)
+	if fields == nil {
+		return ret
+	}
 	for _, field := range fields {
 		if field == "Id" {
 			ret = append(ret, t.Name())
@@ -1227,20 +1281,23 @@ func (res *resource) requestToBody(req interface{}) (body interface{}, err error
 	if requestType.Kind() == reflect.Ptr && requestType.Elem() == defRequestType {
 		body, err = req, nil
 	} else {
-		panic(fmt.Sprintf("not support request type: %v", requestType))
+		panic(fmt.Sprintf("request type want: %v, got %v", reflect.PtrTo(defRequestType), requestType))
 	}
 	return
 }
 func (res *resource) checkResponse(val interface{}, err error) {
 	responseType := res.r.types[res.cq.ResponseType]
+	if val == nil && err == nil {
+		panic("val and err both nil")
+	}
+	if val == nil && err != nil {
+		return
+	}
 	resultType := reflect.TypeOf(val)
 	if resultType.Kind() == reflect.Ptr && resultType.Elem() == responseType {
 		return
 	}
 	if _, ok := val.(Iter); ok {
-		return
-	}
-	if val == nil && err != nil {
 		return
 	}
 	panic(fmt.Sprintf("not support response type: %v", resultType))
@@ -1315,6 +1372,7 @@ func (r *rest) queryRes(cq *CustomQuery, uri *URI, ctx *Context) (res Resource, 
 	return &resource{cq, uri, ctx, r}, nil
 }
 func (r *rest) R(uri *URI, ctx *Context) (res Resource, err error) {
+	uri.r = r
 	name := uri.path[0]
 	if qry, ok := r.queries[name]; ok {
 		if isSysQueryName(name) && !ctx.Sys {
@@ -1322,6 +1380,7 @@ func (r *rest) R(uri *URI, ctx *Context) (res Resource, err error) {
 		}
 		return r.queryRes(qry, uri, ctx)
 	}
-	return nil, &Error{Code: NotFound, Msg: uri.String()}
+	msg := fmt.Sprintf("'%s' not found", uri.String())
+	return nil, &Error{Code: NotFound, Msg: msg}
 }
 

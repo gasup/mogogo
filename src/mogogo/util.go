@@ -69,10 +69,14 @@ func (uri *URI) NumSegment() int {
 	return len(uri.path) - 1
 }
 func (uri *URI) Segment(index int) (val interface{}, err error) {
-	if index < 0 || index >= uri.NumSegment() {
-		panic(fmt.Sprintln("index out of bound: %d", index))
-	}
 	cq := uri.r.queries[uri.path[0]]
+	if uri.NumSegment() != len(cq.PathSegmentsType) {
+		msg := fmt.Sprintf("path need %d segments, got %d", len(cq.PathSegmentsType) + 1, uri.NumSegment() + 1)
+		return nil, &Error{Code:BadRequest, Msg: msg}
+	}
+	if index < 0 || index >= uri.NumSegment() {
+		panic(fmt.Sprintf("index out of bound: %d", index))
+	}
 	typ := cq.PathSegmentsType[index]
 	elem := uri.path[index+1]
 	switch typ {

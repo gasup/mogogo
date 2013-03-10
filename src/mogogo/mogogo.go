@@ -185,7 +185,7 @@ type FieldQuery struct {
 	SortFields []string
 	Unique     bool
 	Count      bool
-	Limit      uint
+	Limit      int
 	Pull       bool
 }
 
@@ -267,11 +267,12 @@ type Slice interface {
 	Items() interface{}
 }
 type Iter interface {
-	CanCursor() bool
-	Cursor() *URI
-	Next() (result interface{}, err error)
+	Count() (n int, err error)
+	Err() (err error)
+	Next() (result interface{}, ok bool)
 	Slice() (slice Slice, err error)
 }
+
 type Resource interface {
 	NewRequest() interface{}
 	Get() (result interface{}, err error)
@@ -305,6 +306,52 @@ func Dial(s *mgo.Session, db string) Session {
 		make(map[string]*CustomQuery),
 		make(map[string]map[string]*bind),
 	}
+}
+
+type selectorIter struct {
+	r          *rest
+	typ        reflect.Type
+	sortFields []string
+	count      bool
+	countNum   int
+	limit      int
+	pull       bool
+	uri        *URI
+	query      *mgo.Query
+	iter       *mgo.Iter
+}
+
+func (si *selectorIter) Count() (n int, err error) {
+	n, err = si.query.Count()
+	if err != nil {
+		n, err = 0, &Error{Code: InternalServerError, Err: err}
+	}
+	return
+}
+func (si *selectorIter) Err() (err error) {
+	if si.iter.Err() == nil {
+		err = nil
+	} else {
+		err = &Error{Code: InternalServerError, Err: si.iter.Err()}
+	}
+	return
+}
+func (si *selectorIter) Next() (result interface{}, ok bool) {
+	if si.iter == nil {
+		si.iter = si.query.Sort(si.sortFields...).Iter()
+	}
+	b := make(bson.M)
+	if si.iter.Next(b) {
+		s := reflect.New(si.typ).Interface()
+		si.r.bsonToStruct(b, s)
+		result, ok = s, true
+	} else {
+		result, ok = nil, false
+	}
+	return
+}
+func (si *selectorIter) Slice() (slice Slice, err error) {
+	panic("Not Implement")
 }
 
 type rest struct {
@@ -1120,7 +1167,42 @@ func (h *fqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) 
 	if h.fq.Allow&GET == 0 {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
-	panic("Not Implement")
+	q, err := h.query(req, ctx)
+	if err != nil {
+		return nil, err
+	}
+	b := make(bson.M)
+	if h.fq.Unique {
+		err = h.coll(ctx).Find(q).One(b)
+		if err == nil {
+			s := h.r.newStruct(h.fq.Type)
+			h.r.bsonToStruct(b, s)
+			result = s
+		} else if err == mgo.ErrNotFound {
+			result, err = nil, &Error{Code: NotFound}
+		} else {
+			result, err = nil, &Error{Code: InternalServerError, Err: err}
+		}
+	} else {
+		sortFields := make([]string, 0)
+		if h.fq.SortFields == nil {
+			sortFields = append(sortFields, "-Id")
+		} else {
+			sortFields = append(sortFields, h.fq.SortFields...)
+		}
+		result, err = &selectorIter{
+			r:          h.r,
+			typ:        h.r.types[h.fq.Type],
+			sortFields: h.r.fieldsToKeys(h.r.types[h.fq.Type], sortFields),
+			count:      h.fq.Count,
+			limit:      h.fq.Limit,
+			pull:       h.fq.Pull,
+			uri:        req.URI,
+			query:      ctx.coll(h.fq.Type).Find(q),
+		}, err
+
+	}
+	return
 }
 func (h *fqHandler) Put(req *Req, ctx *Context) (result interface{}, err error) {
 	if h.fq.Allow&PUT == 0 {
@@ -1141,6 +1223,7 @@ func (h *fqHandler) Put(req *Req, ctx *Context) (result interface{}, err error) 
 		base.ct = base.mt
 		base.loaded = true
 		base.r = h.r
+		base.t = h.fq.Type
 		b := h.r.structToBson(body)
 		err = h.coll(ctx).Insert(b)
 		if err != nil {
@@ -1158,6 +1241,7 @@ func (h *fqHandler) Put(req *Req, ctx *Context) (result interface{}, err error) 
 		base.ct = old["ct"].(time.Time)
 		base.loaded = true
 		base.r = h.r
+		base.t = h.fq.Type
 		b := h.r.structToBson(body)
 		_, err = h.coll(ctx).UpsertId(base.id, b)
 		if err != nil {
@@ -1203,6 +1287,7 @@ func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error)
 	base.ct = base.mt
 	base.loaded = true
 	base.r = h.r
+	base.t = h.fq.Type
 	b := h.r.structToBson(body)
 	err = h.coll(ctx).Insert(b)
 	if err != nil {
@@ -1348,6 +1433,14 @@ func (r *rest) newWithObjectId(typ reflect.Type, id bson.ObjectId) (val interfac
 	b.r = r
 	b.self = v.Interface()
 	return b.self, nil
+}
+func (r *rest) newStruct(typ string) interface{} {
+	v := reflect.New(r.types[typ])
+	b := getBase(v.Elem())
+	b.t = typ
+	b.r = r
+	b.self = v.Interface()
+	return b.self
 }
 func (r *rest) newWithId(typ string, hex string) (val interface{}, err error) {
 	id, err := parseObjectId(hex)

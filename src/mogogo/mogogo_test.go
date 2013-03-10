@@ -529,3 +529,101 @@ func ExampleFieldQueryPut1() {
 	fmt.Println(resp, err)
 	//Output:<nil> <nil>
 }
+func ExampleFieldQueryGet1() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	err = ms.DB("rest_test").C("ss").DropCollection()
+	if err != nil {
+		panic(err)
+	}
+	s := Dial(ms, "rest_test")
+	s.DefType(SS{})
+	s.Def("test-ss", FieldQuery{
+		Type:  "SS",
+		Allow: POST,
+	})
+	ctx := s.NewContext()
+	defer ctx.Close()
+	uri, err := URIParse("/test-ss")
+	if err != nil {
+		panic(err)
+	}
+	data := SS{S1: "Hello World"}
+	r, err := s.R(uri, ctx)
+	if err != nil {
+		panic(err)
+	}
+	resp, err := r.Post(&data)
+	if err != nil {
+		panic(err)
+	}
+	r, err = s.R(data.Self(), ctx)
+	resp, err = r.Get()
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(resp.(*SS).S1)
+	//Output:Hello World
+}
+func ExampleFieldQueryGet2() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	err = ms.DB("rest_test").C("ss").DropCollection()
+	if err != nil {
+		panic(err)
+	}
+	s := Dial(ms, "rest_test")
+	s.DefType(SS{})
+	s.Def("test-ss", FieldQuery{
+		Type:  "SS",
+		Allow: GET | POST,
+	})
+	ctx := s.NewContext()
+	defer ctx.Close()
+	uri, err := URIParse("/test-ss")
+	if err != nil {
+		panic(err)
+	}
+	r, err := s.R(uri, ctx)
+	if err != nil {
+		panic(err)
+	}
+	for i := 0; i < 5; i++ {
+		data := SS{S1: fmt.Sprintf("Hello %d", i)}
+		_, err := r.Post(&data)
+		if err != nil {
+			panic(err)
+		}
+	}
+	resp, err := r.Get()
+	if err != nil {
+		panic(err)
+	}
+	iter := resp.(Iter)
+	n, err := iter.Count()
+	fmt.Println(n, err)
+	for {
+		resp, ok := iter.Next()
+		if !ok {
+			break
+		}
+		ss := resp.(*SS)
+		fmt.Println(ss.S1)
+	}
+	if iter.Err() != nil {
+		panic(iter.Err())
+	}
+	//Output:5 <nil>
+	//Hello 4
+	//Hello 3
+	//Hello 2
+	//Hello 1
+	//Hello 0
+
+}

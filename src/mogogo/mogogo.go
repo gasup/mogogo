@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"strconv"
 )
 
 type ErrorCode uint
@@ -68,6 +69,74 @@ func (re *Error) Error() string {
 	return ret
 }
 
+type URI struct {
+	r           *rest
+	path        []string
+	QueryParams map[string]string
+}
+
+func (uri *URI) NumSegment() int {
+	return len(uri.path) - 1
+}
+func (uri *URI) Segment(index int) (val interface{}, err error) {
+	cq := uri.r.queries[uri.path[0]]
+	if uri.NumSegment() != len(cq.PathSegmentsType) {
+		msg := fmt.Sprintf("path need %d segments, got %d", len(cq.PathSegmentsType)+1, uri.NumSegment()+1)
+		return nil, &Error{Code: BadRequest, Msg: msg}
+	}
+	if index < 0 || index >= uri.NumSegment() {
+		panic(fmt.Sprintf("index out of bound: %d", index))
+	}
+	typ := cq.PathSegmentsType[index]
+	elem := uri.path[index+1]
+	switch typ {
+	case "int":
+		val, err = strconv.Atoi(elem)
+	case "string":
+		val, err = elem, nil
+	case "bool":
+		val, err = strconv.ParseBool(elem)
+	default:
+		val, err = uri.r.newWithId(typ, elem)
+	}
+	return
+}
+func (uri *URI) URLWithBase(base *url.URL) *url.URL {
+	u := uri.url()
+	u.Scheme = base.Scheme
+	u.Host = base.Host
+	return u
+}
+func (uri *URI) url() *url.URL {
+	var u url.URL
+	u.Path = "/" + strings.Join(uri.path, "/")
+	vals := make(url.Values)
+	for k, v := range uri.QueryParams {
+		vals.Add(k, v)
+	}
+	u.RawQuery = vals.Encode()
+	return &u
+}
+func (uri *URI) String() string {
+	return uri.url().String()
+}
+func URIParse(s string) (uri *URI, err error) {
+	url, err := url.Parse(s)
+	if err != nil {
+		return nil, err
+	}
+	if url.Path[0] != '/' {
+		return nil, fmt.Errorf("must absolute url. %s", s)
+	}
+	uri = new(URI)
+	uri.path = strings.Split(url.Path[1:], "/")
+	uri.QueryParams = make(map[string]string)
+	for k, v := range url.Query() {
+		uri.QueryParams[k] = v[0]
+	}
+	return
+
+}
 //被 rest 管理的 struct 必须包含 Base.
 type Base struct {
 	t      string

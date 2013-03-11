@@ -8,9 +8,9 @@ import (
 	"net/url"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
-	"strconv"
 )
 
 type ErrorCode uint
@@ -137,6 +137,7 @@ func URIParse(s string) (uri *URI, err error) {
 	return
 
 }
+
 //被 rest 管理的 struct 必须包含 Base.
 type Base struct {
 	t      string

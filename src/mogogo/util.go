@@ -56,4 +56,3 @@ func parseObjectId(h string) (id bson.ObjectId, err error) {
 	}
 	return bson.ObjectId(d), nil
 }
-

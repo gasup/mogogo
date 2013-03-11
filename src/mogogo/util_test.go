@@ -63,4 +63,3 @@ func ExampleCheckQueryName() {
 	checkQueryName("aa-")
 	//Output:'aa-' not a valid query name
 }
-

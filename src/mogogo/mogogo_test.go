@@ -715,3 +715,70 @@ func ExampleBaseLoad() {
 	fmt.Println(ss.S1)
 	//Output:Hello World
 }
+
+type SSChild struct {
+	Base
+	P  *SS
+	S1 string
+}
+
+func ExampleBind() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	err = ms.DB("rest_test").C("ss").DropCollection()
+	err = ms.DB("rest_test").C("sschild").DropCollection()
+	if err != nil {
+		panic(err)
+	}
+	s := Dial(ms, "rest_test")
+	s.DefType(SS{})
+	s.DefType(SSChild{})
+	s.Def("test-ss", FieldResource{
+		Type:  "SS",
+		Allow: GET | POST,
+	})
+	s.Def("ss-child", FieldResource{
+		Type:   "SSChild",
+		Allow:  GET | POST,
+		Fields: []string{"P"},
+	})
+	s.Bind("child", "SS", "ss-child", []string{"Id"})
+
+	ctx := s.NewContext()
+	defer ctx.Close()
+	uri, err := ResIdParse("/test-ss")
+	if err != nil {
+		panic(err)
+	}
+	r, err := s.R(uri, ctx)
+	if err != nil {
+		panic(err)
+	}
+	data := SS{S1: "Hello World"}
+	resp, err := r.Post(&data)
+	if err != nil {
+		panic(err)
+	}
+	ss := resp.(*SS)
+	sschild := &SSChild{S1: "Hello Child"}
+	resp, err = ss.R("child", ctx).Post(sschild)
+	resp, err = ss.R("child", ctx).Post(sschild)
+	if err != nil {
+		panic(err)
+	}
+	sschild = resp.(*SSChild)
+	fmt.Println(sschild.S1)
+	fmt.Println(ss.id == sschild.P.id)
+	resp, err = ss.R("child", ctx).Get()
+	if err != nil {
+		panic(err)
+	}
+	iter := resp.(Iter)
+	fmt.Println(iter.Count())
+	//Output:Hello Child
+	//true
+	//2
+}

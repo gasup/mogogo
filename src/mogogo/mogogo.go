@@ -137,24 +137,35 @@ func ResIdParse(s string) (resId *ResId, err error) {
 	return
 
 }
-func NewResId(name string, segments ...interface{})  *ResId {
+func NewResId(name string, segments ...interface{}) *ResId {
 	ret := new(ResId)
-	ret.path = make([]string, len(segments))
+	ret.path = make([]string, len(segments)+1)
+	ret.path[0] = name
 	for i, seg := range segments {
 		switch sv := seg.(type) {
 		case string:
-			ret.path[i] = sv
+			ret.path[i+1] = sv
 		case bool:
-			ret.path[i] = strconv.FormatBool(sv)
+			ret.path[i+1] = strconv.FormatBool(sv)
 		case int:
-			ret.path[i] = strconv.Itoa(sv)
+			ret.path[i+1] = strconv.Itoa(sv)
+		case *string:
+			ret.path[i+1] = *sv
+		case *bool:
+			ret.path[i+1] = strconv.FormatBool(*sv)
+		case *int:
+			ret.path[i+1] = strconv.Itoa(*sv)
 		default:
-			st := reflect.TypeOf(sv)
-			if !(st.Kind() == reflect.Ptr && st.Elem().Kind() == reflect.Struct) {
-				panic(fmt.Sprintf("type for segment %d must pointer of struct", i))
+			st := reflect.TypeOf(seg)
+			var base *Base
+			if st.Kind() == reflect.Ptr && st.Elem().Kind() == reflect.Struct {
+				base = getBase(reflect.ValueOf(seg).Elem())
+			} else if st.Kind() == reflect.Struct {
+				base = getBase(reflect.ValueOf(seg))
+			} else {
+				panic(fmt.Sprintf("type for segment %d must struct", i))
 			}
-			base := getBase(reflect.ValueOf(sv).Elem())
-			ret.path[i] = base.id.Hex()
+			ret.path[i+1] = base.id.Hex()
 		}
 	}
 	ret.QueryParams = make(map[string]string)
@@ -202,7 +213,7 @@ func (b *Base) Load(ctx *Context) (ok bool) {
 	if b.loaded {
 		return true
 	}
-	sel := bson.M{"_id":b.id}
+	sel := bson.M{"_id": b.id}
 	bs := make(bson.M)
 	err := ctx.coll(b.t).Find(sel).One(bs)
 	if err == nil {
@@ -216,12 +227,44 @@ func (b *Base) Load(ctx *Context) (ok bool) {
 	}
 	return
 }
-
-func (b *Base) R(name string, ctx *Context) Resource {
-	panic("Not Implements")
+func (b *Base) Rel(name string) *ResId {
+	msg := fmt.Sprintf("resource '%s' not found in %s", name, b.t)
+	binds, ok := b.r.binds[b.t]
+	if !ok {
+		panic(msg)
+	}
+	bin, ok := binds[name]
+	if !ok {
+		panic(msg)
+	}
+	segs := make([]interface{}, len(bin.fields))
+	self := reflect.ValueOf(b.self).Elem()
+	for i, f := range bin.fields {
+		if f == "Id" {
+			segs[i] = b.self
+		} else {
+			segs[i] = self.FieldByName(f).Interface()
+		}
+	}
+	return NewResId(bin.res, segs...)
 }
-func (b *Base) AllRes(ctx *Context) map[string] Resource {
-	panic("Not Implements")
+func (b *Base) R(name string, ctx *Context) Resource {
+	r, err := b.r.R(b.Rel(name), ctx)
+	if err != nil {
+		panic(err)
+	}
+	return r
+}
+func (b *Base) AllRel() map[string]*ResId {
+	ret := make(map[string]*ResId)
+	binds, ok := b.r.binds[b.t]
+	if !ok {
+		return ret
+	}
+	for k, _ := range binds {
+		ret[k] = b.Rel(k)
+	}
+	return ret
 }
 
 //地理位置
@@ -426,7 +469,7 @@ type selectorIter struct {
 	countNum   int
 	limit      int
 	pull       bool
-	resId        *ResId
+	resId      *ResId
 	query      *mgo.Query
 	iter       *mgo.Iter
 }
@@ -472,7 +515,7 @@ func (r *rest) NewContext() *Context {
 }
 
 type bind struct {
-	res  string
+	res    string
 	fields []string
 }
 
@@ -1051,9 +1094,26 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}, baseURL *url
 	}
 	return nil
 }
+func (r *rest) checkSegmentsType(typ string, fields []string, res string) {
+	segsType := r.queries[res].PathSegmentsType
+	if len(segsType) != len(fields) {
+		msg := fmt.Sprintf("fields len is %d but path segments len is %d", len(fields), len(segsType))
+		panic(msg)
+	}
+	fieldsType := r.fieldsToPathSegmentsType(r.types[typ], fields)
+	for i, t := range fieldsType {
+		st := segsType[i]
+		if t != st {
+			msg := fmt.Sprintf("type not match (%s and %s) at index %d", t, st, i)
+			panic(msg)
+		}
+	}
+
+}
 func (r *rest) Bind(name string, typ string, res string, fields []string) {
 	r.checkType(typ)
 	r.checkQuery(res)
+	r.checkSegmentsType(typ, fields, res)
 	if name == "" {
 		panic("name is empty")
 	}
@@ -1302,7 +1362,7 @@ func (h *fqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) 
 			count:      h.fq.Count,
 			limit:      h.fq.Limit,
 			pull:       h.fq.Pull,
-			resId:        req.ResId,
+			resId:      req.ResId,
 			query:      ctx.coll(h.fq.Type).Find(q),
 		}, err
 
@@ -1323,11 +1383,14 @@ func (h *fqHandler) Put(req *Req, ctx *Context) (result interface{}, err error) 
 	err = h.coll(ctx).Find(q).One(old)
 	if err == mgo.ErrNotFound {
 		base := getBase(reflect.ValueOf(body).Elem())
-		base.id = bson.NewObjectId()
+		if base.id == "" {
+			base.id = bson.NewObjectId()
+		}
 		base.mt = bson.Now()
 		base.ct = base.mt
 		base.loaded = true
 		base.r = h.r
+		base.self = body
 		base.t = h.fq.Type
 		b := h.r.structToBson(body)
 		err = h.coll(ctx).Insert(b)
@@ -1346,6 +1409,7 @@ func (h *fqHandler) Put(req *Req, ctx *Context) (result interface{}, err error) 
 		base.ct = old["ct"].(time.Time)
 		base.loaded = true
 		base.r = h.r
+		base.self = body
 		base.t = h.fq.Type
 		b := h.r.structToBson(body)
 		_, err = h.coll(ctx).UpsertId(base.id, b)
@@ -1392,6 +1456,7 @@ func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error)
 	base.ct = base.mt
 	base.loaded = true
 	base.r = h.r
+	base.self = body
 	base.t = h.fq.Type
 	b := h.r.structToBson(body)
 	err = h.coll(ctx).Insert(b)
@@ -1556,10 +1621,10 @@ func (r *rest) newWithId(typ string, hex string) (val interface{}, err error) {
 }
 
 type resource struct {
-	cq  *CustomResource
+	cq    *CustomResource
 	resId *ResId
-	ctx *Context
-	r   *rest
+	ctx   *Context
+	r     *rest
 }
 
 func (res *resource) requestToBody(req interface{}) (body interface{}, err error) {

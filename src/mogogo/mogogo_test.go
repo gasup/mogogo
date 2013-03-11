@@ -656,8 +656,8 @@ func ExampleFieldResourceGet2() {
 		panic(err)
 	}
 	iter := resp.(Iter)
-	n, err := iter.Count()
-	fmt.Println(n, err)
+	n := iter.Count()
+	fmt.Println(n)
 	for {
 		resp, ok := iter.Next()
 		if !ok {
@@ -666,10 +666,7 @@ func ExampleFieldResourceGet2() {
 		ss := resp.(*SS)
 		fmt.Println(ss.S1)
 	}
-	if iter.Err() != nil {
-		panic(iter.Err())
-	}
-	//Output:5 <nil>
+	//Output:5
 	//Hello 4
 	//Hello 3
 	//Hello 2
@@ -711,9 +708,9 @@ func ExampleBaseLoad() {
 	}
 	ss := rest.newStruct("SS").(*SS)
 	ss.id = resp.(*SS).id
-	err = ss.Load(ctx)
-	if err != nil {
-		panic(err)
+	ok := ss.Load(ctx)
+	if !ok {
+		panic("not found")
 	}
 	fmt.Println(ss.S1)
 	//Output:Hello World

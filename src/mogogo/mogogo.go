@@ -198,22 +198,21 @@ func (b *Base) Self() *ResId {
 	return &ResId{b.r, []string{typeNameToQueryName(b.t), b.id.Hex()}, nil}
 }
 
-func (b *Base) Load(ctx *Context) (err error) {
+func (b *Base) Load(ctx *Context) (ok bool) {
 	if b.loaded {
-		return nil
+		return true
 	}
 	sel := bson.M{"_id":b.id}
 	bs := make(bson.M)
-	err = ctx.coll(b.t).Find(sel).One(bs)
+	err := ctx.coll(b.t).Find(sel).One(bs)
 	if err == nil {
 		b.r.bsonToStruct(bs, b.self)
 		b.loaded = true
-		err = nil
+		ok = true
 	} else if err == mgo.ErrNotFound {
-		msg := fmt.Sprintf("'%s' not found", b.Self().String())
-		err = &Error{Code: NotFound, Msg:msg}
+		ok = false
 	} else {
-		err = &Error{Code: InternalServerError, Err: err}
+		panic(&Error{Code: InternalServerError, Err: err})
 	}
 	return
 }
@@ -379,8 +378,7 @@ type Slice interface {
 	Items() interface{}
 }
 type Iter interface {
-	Count() (n int, err error)
-	Err() (err error)
+	Count() (n int)
 	Next() (result interface{}, ok bool)
 	Slice() (slice Slice, err error)
 }
@@ -433,18 +431,10 @@ type selectorIter struct {
 	iter       *mgo.Iter
 }
 
-func (si *selectorIter) Count() (n int, err error) {
-	n, err = si.query.Count()
+func (si *selectorIter) Count() (n int) {
+	n, err := si.query.Count()
 	if err != nil {
-		n, err = 0, &Error{Code: InternalServerError, Err: err}
-	}
-	return
-}
-func (si *selectorIter) Err() (err error) {
-	if si.iter.Err() == nil {
-		err = nil
-	} else {
-		err = &Error{Code: InternalServerError, Err: si.iter.Err()}
+		panic(&Error{Code: InternalServerError, Err: err})
 	}
 	return
 }
@@ -458,6 +448,9 @@ func (si *selectorIter) Next() (result interface{}, ok bool) {
 		si.r.bsonToStruct(b, s)
 		result, ok = s, true
 	} else {
+		if si.iter.Err() != nil {
+			panic(&Error{Code: InternalServerError, Err: si.iter.Err()})
+		}
 		result, ok = nil, false
 	}
 	return
@@ -1293,7 +1286,7 @@ func (h *fqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) 
 		} else if err == mgo.ErrNotFound {
 			result, err = nil, &Error{Code: NotFound}
 		} else {
-			result, err = nil, &Error{Code: InternalServerError, Err: err}
+			panic(&Error{Code: InternalServerError, Err: err})
 		}
 	} else {
 		sortFields := make([]string, 0)
@@ -1343,7 +1336,7 @@ func (h *fqHandler) Put(req *Req, ctx *Context) (result interface{}, err error) 
 			if lasterr.Code == 11000 {
 				return nil, &Error{Code: Conflict}
 			} else {
-				return nil, &Error{Code: InternalServerError, Err: err}
+				panic(&Error{Code: InternalServerError, Err: err})
 			}
 		}
 	} else if err == nil {
@@ -1366,7 +1359,7 @@ func (h *fqHandler) Put(req *Req, ctx *Context) (result interface{}, err error) 
 		}
 
 	} else {
-		return nil, &Error{Code: InternalServerError, Err: err}
+		panic(Error{Code: InternalServerError, Err: err})
 	}
 	return body, nil
 }
@@ -1380,7 +1373,7 @@ func (h *fqHandler) Delete(req *Req, ctx *Context) (result interface{}, err erro
 	}
 	_, err = h.coll(ctx).RemoveAll(q)
 	if err != nil {
-		err = &Error{Code: InternalServerError, Err: err}
+		panic(&Error{Code: InternalServerError, Err: err})
 	}
 	return nil, err
 }
@@ -1407,7 +1400,7 @@ func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error)
 		if lasterr.Code == 11000 {
 			return nil, &Error{Code: Conflict}
 		} else {
-			return nil, &Error{Code: InternalServerError, Err: err}
+			panic(&Error{Code: InternalServerError, Err: err})
 		}
 	}
 	return body, nil

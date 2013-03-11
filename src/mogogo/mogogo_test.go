@@ -749,7 +749,7 @@ func ExampleBind() {
 
 	ctx := s.NewContext()
 	defer ctx.Close()
-	uri, err := ResIdParse("/test-ss")
+	uri := NewResId("test-ss")
 	if err != nil {
 		panic(err)
 	}

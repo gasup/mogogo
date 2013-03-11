@@ -80,14 +80,14 @@ func (resId *ResId) NumSegment() int {
 }
 func (resId *ResId) Segment(index int) (val interface{}, err error) {
 	cq := resId.r.queries[resId.path[0]]
-	if resId.NumSegment() != len(cq.PathSegmentsType) {
-		msg := fmt.Sprintf("path need %d segments, got %d", len(cq.PathSegmentsType)+1, resId.NumSegment()+1)
+	if resId.NumSegment() != len(cq.PathSegmentTypes) {
+		msg := fmt.Sprintf("path need %d segments, got %d", len(cq.PathSegmentTypes)+1, resId.NumSegment()+1)
 		return nil, &Error{Code: BadRequest, Msg: msg}
 	}
 	if index < 0 || index >= resId.NumSegment() {
 		panic(fmt.Sprintf("index out of bound: %d", index))
 	}
-	typ := cq.PathSegmentsType[index]
+	typ := cq.PathSegmentTypes[index]
 	elem := resId.path[index+1]
 	switch typ {
 	case "int":
@@ -348,6 +348,7 @@ type SelectorResource struct {
 	ResponseType string
 	SelectorFunc func(req *Req, ctx *Context) (selector map[string]interface{}, err error)
 	SortFields   []string
+	PathSegmentTypes []string
 	Count        bool
 	Limit        uint
 }
@@ -372,7 +373,7 @@ type Patchable interface {
 type CustomResource struct {
 	RequestType      string
 	ResponseType     string
-	PathSegmentsType []string
+	PathSegmentTypes []string
 	Handler          interface{}
 }
 
@@ -1095,12 +1096,12 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}, baseURL *url
 	return nil
 }
 func (r *rest) checkSegmentsType(typ string, fields []string, res string) {
-	segsType := r.queries[res].PathSegmentsType
+	segsType := r.queries[res].PathSegmentTypes
 	if len(segsType) != len(fields) {
 		msg := fmt.Sprintf("fields len is %d but path segments len is %d", len(fields), len(segsType))
 		panic(msg)
 	}
-	fieldsType := r.fieldsToPathSegmentsType(r.types[typ], fields)
+	fieldsType := r.fieldsToPathSegmentTypes(r.types[typ], fields)
 	for i, t := range fieldsType {
 		st := segsType[i]
 		if t != st {
@@ -1474,7 +1475,7 @@ func (h *fqHandler) Patch(req *Req, ctx *Context) (result interface{}, err error
 	panic("Not Implement")
 }
 
-func (r *rest) fieldsToPathSegmentsType(t reflect.Type, fields []string) []string {
+func (r *rest) fieldsToPathSegmentTypes(t reflect.Type, fields []string) []string {
 	ret := make([]string, 0)
 	if fields == nil {
 		return ret
@@ -1523,7 +1524,7 @@ func (r *rest) defFieldResource(name string, fq FieldResource) {
 	checkFieldResource(&fq)
 	h := newFQHandler(r, &fq)
 	h.ensureIndex()
-	segtype := r.fieldsToPathSegmentsType(r.types[fq.Type], fq.Fields)
+	segtype := r.fieldsToPathSegmentTypes(r.types[fq.Type], fq.Fields)
 	cq := CustomResource{fq.Type, fq.Type, segtype, h}
 	r.defCustomResource(name, cq)
 }
@@ -1531,7 +1532,7 @@ func (r *rest) defSelectorResource(name string, sq SelectorResource) {
 	r.checkType(sq.ResponseType)
 	panic("Not Implement")
 }
-func (r *rest) checkPathSegmentsType(segtype []string) {
+func (r *rest) checkPathSegmentTypes(segtype []string) {
 	for _, e := range segtype {
 		if r.typeDefined(e) {
 			continue
@@ -1546,7 +1547,7 @@ func (r *rest) checkPathSegmentsType(segtype []string) {
 func (r *rest) defCustomResource(name string, cq CustomResource) {
 	r.checkType(cq.RequestType)
 	r.checkType(cq.ResponseType)
-	r.checkPathSegmentsType(cq.PathSegmentsType)
+	r.checkPathSegmentTypes(cq.PathSegmentTypes)
 	if cq.Handler == nil {
 		panic("Handler can't be nil")
 	}

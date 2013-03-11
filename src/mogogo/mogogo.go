@@ -246,7 +246,7 @@ func (m Method) String() string {
 //Field Query
 //指定 SortFields 时不可以开启 Pull
 //Unique 为 true 时不支持 POST, 为 false 时不支持 PUT
-type FieldQuery struct {
+type FieldResource struct {
 	Type       string
 	Allow      Method
 	Fields     []string
@@ -259,7 +259,7 @@ type FieldQuery struct {
 }
 
 //Selector Query, 只支持 GET
-type SelectorQuery struct {
+type SelectorResource struct {
 	ResponseType string
 	SelectorFunc func(req *Req, ctx *Context) (selector map[string]interface{}, err error)
 	SortFields   []string
@@ -284,7 +284,7 @@ type Patchable interface {
 }
 
 //Custom Query
-type CustomQuery struct {
+type CustomResource struct {
 	RequestType      string
 	ResponseType     string
 	PathSegmentsType []string
@@ -372,7 +372,7 @@ func Dial(s *mgo.Session, db string) Session {
 		s,
 		db,
 		make(map[string]reflect.Type),
-		make(map[string]*CustomQuery),
+		make(map[string]*CustomResource),
 		make(map[string]map[string]*bind),
 	}
 }
@@ -427,7 +427,7 @@ type rest struct {
 	s       *mgo.Session
 	db      string
 	types   map[string]reflect.Type
-	queries map[string]*CustomQuery
+	queries map[string]*CustomResource
 	binds   map[string]map[string]*bind
 }
 
@@ -1031,7 +1031,7 @@ func (r *rest) Bind(name string, typ string, query string, fields []string) {
 	}
 	bt[name] = &bind{query, fields}
 }
-func (r *rest) registerQuery(name string, cq CustomQuery) {
+func (r *rest) registerQuery(name string, cq CustomResource) {
 	checkQueryName(name)
 	if _, ok := r.queries[name]; ok {
 		panic(fmt.Sprintf("query '%s' already defined", name))
@@ -1073,7 +1073,7 @@ func (r *rest) DefType(def interface{}) {
 }
 func (r *rest) defSelf(typ string) {
 	r.checkType(typ)
-	r.Def(typeNameToQueryName(typ), FieldQuery{
+	r.Def(typeNameToQueryName(typ), FieldResource{
 		Type:   typ,
 		Fields: []string{"Id"},
 		Allow:  GET,
@@ -1082,12 +1082,12 @@ func (r *rest) defSelf(typ string) {
 }
 func (r *rest) Def(name string, def interface{}) {
 	switch q := def.(type) {
-	case FieldQuery:
-		r.defFieldQuery(name, q)
-	case SelectorQuery:
-		r.defSelectorQuery(name, q)
-	case CustomQuery:
-		r.defCustomQuery(name, q)
+	case FieldResource:
+		r.defFieldResource(name, q)
+	case SelectorResource:
+		r.defSelectorResource(name, q)
+	case CustomResource:
+		r.defCustomResource(name, q)
 	default:
 		panic(fmt.Sprintf("unknown query type: %v", reflect.TypeOf(def)))
 	}
@@ -1095,10 +1095,10 @@ func (r *rest) Def(name string, def interface{}) {
 
 type fqHandler struct {
 	r  *rest
-	fq *FieldQuery
+	fq *FieldResource
 }
 
-func newFQHandler(r *rest, fq *FieldQuery) *fqHandler {
+func newFQHandler(r *rest, fq *FieldResource) *fqHandler {
 	return &fqHandler{r, fq}
 }
 func setFieldValue(sv reflect.Value, f string, v reflect.Value) error {
@@ -1412,21 +1412,21 @@ func (r *rest) fieldsToPathSegmentsType(t reflect.Type, fields []string) []strin
 	}
 	return ret
 }
-func checkFieldQuery(fq *FieldQuery) {
+func checkFieldResource(fq *FieldResource) {
 	if fq.Allow&PUT != 0 && !fq.Unique {
 		panic("PUT only support unique field query")
 	}
 }
-func (r *rest) defFieldQuery(name string, fq FieldQuery) {
+func (r *rest) defFieldResource(name string, fq FieldResource) {
 	r.checkType(fq.Type)
-	checkFieldQuery(&fq)
+	checkFieldResource(&fq)
 	h := newFQHandler(r, &fq)
 	h.ensureIndex()
 	segtype := r.fieldsToPathSegmentsType(r.types[fq.Type], fq.Fields)
-	cq := CustomQuery{fq.Type, fq.Type, segtype, h}
-	r.defCustomQuery(name, cq)
+	cq := CustomResource{fq.Type, fq.Type, segtype, h}
+	r.defCustomResource(name, cq)
 }
-func (r *rest) defSelectorQuery(name string, sq SelectorQuery) {
+func (r *rest) defSelectorResource(name string, sq SelectorResource) {
 	r.checkType(sq.ResponseType)
 	panic("Not Implement")
 }
@@ -1442,7 +1442,7 @@ func (r *rest) checkPathSegmentsType(segtype []string) {
 		panic(fmt.Sprintf("type '%s' not support", e))
 	}
 }
-func (r *rest) defCustomQuery(name string, cq CustomQuery) {
+func (r *rest) defCustomResource(name string, cq CustomResource) {
 	r.checkType(cq.RequestType)
 	r.checkType(cq.ResponseType)
 	r.checkPathSegmentsType(cq.PathSegmentsType)
@@ -1520,7 +1520,7 @@ func (r *rest) newWithId(typ string, hex string) (val interface{}, err error) {
 }
 
 type resource struct {
-	cq  *CustomQuery
+	cq  *CustomResource
 	uri *URI
 	ctx *Context
 	r   *rest
@@ -1616,7 +1616,7 @@ func (res *resource) Patch(request interface{}) (response interface{}, err error
 func (res *resource) NewRequest() interface{} {
 	return reflect.New(res.r.types[res.cq.RequestType]).Interface()
 }
-func (r *rest) queryRes(cq *CustomQuery, uri *URI, ctx *Context) (res Resource, err error) {
+func (r *rest) queryRes(cq *CustomResource, uri *URI, ctx *Context) (res Resource, err error) {
 	return &resource{cq, uri, ctx, r}, nil
 }
 func (r *rest) R(uri *URI, ctx *Context) (res Resource, err error) {

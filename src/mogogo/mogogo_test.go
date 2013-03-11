@@ -371,7 +371,7 @@ func ExampleStructToMap() {
 	//http://abc.com/xyz?c=d
 }
 
-func ExampleFieldQueryPost1() {
+func ExampleFieldResourcePost1() {
 	ms, err := mgo.Dial("localhost")
 	if err != nil {
 		panic(err)
@@ -383,7 +383,7 @@ func ExampleFieldQueryPost1() {
 	}
 	s := Dial(ms, "rest_test")
 	s.DefType(SS{})
-	s.Def("test-ss", FieldQuery{
+	s.Def("test-ss", FieldResource{
 		Type:  "SS",
 		Allow: POST,
 	})
@@ -415,7 +415,7 @@ type SSS struct {
 	S3 *SS
 }
 
-func ExampleFieldQueryPost2() {
+func ExampleFieldResourcePost2() {
 	ms, err := mgo.Dial("localhost")
 	if err != nil {
 		panic(err)
@@ -429,7 +429,7 @@ func ExampleFieldQueryPost2() {
 	rest := s.(*rest)
 	s.DefType(SS{})
 	s.DefType(SSS{})
-	s.Def("test-sss", FieldQuery{
+	s.Def("test-sss", FieldResource{
 		Type:   "SSS",
 		Allow:  POST,
 		Fields: []string{"S1", "I1"},
@@ -474,7 +474,7 @@ func ExampleFieldQueryPost2() {
 	//513b090869ca940ef500000b
 }
 
-func ExampleFieldQueryDelete1() {
+func ExampleFieldResourceDelete1() {
 	ms, err := mgo.Dial("localhost")
 	if err != nil {
 		panic(err)
@@ -488,7 +488,7 @@ func ExampleFieldQueryDelete1() {
 	rest := s.(*rest)
 	s.DefType(SS{})
 	s.DefType(SSS{})
-	s.Def("test-sss", FieldQuery{
+	s.Def("test-sss", FieldResource{
 		Type:   "SSS",
 		Allow:  POST | DELETE,
 		Fields: []string{"S1", "I1"},
@@ -524,7 +524,7 @@ func ExampleFieldQueryDelete1() {
 	fmt.Println(resp, err)
 	//Output:<nil> <nil>
 }
-func ExampleFieldQueryPut1() {
+func ExampleFieldResourcePut1() {
 	ms, err := mgo.Dial("localhost")
 	if err != nil {
 		panic(err)
@@ -538,7 +538,7 @@ func ExampleFieldQueryPut1() {
 	rest := s.(*rest)
 	s.DefType(SS{})
 	s.DefType(SSS{})
-	s.Def("test-sss", FieldQuery{
+	s.Def("test-sss", FieldResource{
 		Type:   "SSS",
 		Allow:  PUT | DELETE,
 		Fields: []string{"S1", "I1"},
@@ -579,7 +579,7 @@ func ExampleFieldQueryPut1() {
 	fmt.Println(resp, err)
 	//Output:<nil> <nil>
 }
-func ExampleFieldQueryGet1() {
+func ExampleFieldResourceGet1() {
 	ms, err := mgo.Dial("localhost")
 	if err != nil {
 		panic(err)
@@ -591,7 +591,7 @@ func ExampleFieldQueryGet1() {
 	}
 	s := Dial(ms, "rest_test")
 	s.DefType(SS{})
-	s.Def("test-ss", FieldQuery{
+	s.Def("test-ss", FieldResource{
 		Type:  "SS",
 		Allow: POST,
 	})
@@ -618,7 +618,7 @@ func ExampleFieldQueryGet1() {
 	fmt.Println(resp.(*SS).S1)
 	//Output:Hello World
 }
-func ExampleFieldQueryGet2() {
+func ExampleFieldResourceGet2() {
 	ms, err := mgo.Dial("localhost")
 	if err != nil {
 		panic(err)
@@ -630,7 +630,7 @@ func ExampleFieldQueryGet2() {
 	}
 	s := Dial(ms, "rest_test")
 	s.DefType(SS{})
-	s.Def("test-ss", FieldQuery{
+	s.Def("test-ss", FieldResource{
 		Type:  "SS",
 		Allow: GET | POST,
 	})

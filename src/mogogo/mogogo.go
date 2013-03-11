@@ -198,11 +198,30 @@ func (b *Base) Self() *ResId {
 	return &ResId{b.r, []string{typeNameToQueryName(b.t), b.id.Hex()}, nil}
 }
 
-func (b *Base) Load() error {
-	panic("Not Implements")
+func (b *Base) Load(ctx *Context) (err error) {
+	if b.loaded {
+		return nil
+	}
+	sel := bson.M{"_id":b.id}
+	bs := make(bson.M)
+	err = ctx.coll(b.t).Find(sel).One(bs)
+	if err == nil {
+		b.r.bsonToStruct(bs, b.self)
+		b.loaded = true
+		err = nil
+	} else if err == mgo.ErrNotFound {
+		msg := fmt.Sprintf("'%s' not found", b.Self().String())
+		err = &Error{Code: NotFound, Msg:msg}
+	} else {
+		err = &Error{Code: InternalServerError, Err: err}
+	}
+	return
 }
 
 func (b *Base) R(name string, ctx *Context) Resource {
+	panic("Not Implements")
+}
+func (b *Base) AllRes(ctx *Context) map[string] Resource {
 	panic("Not Implements")
 }
 
@@ -378,7 +397,7 @@ type Resource interface {
 type Session interface {
 	NewContext() *Context
 	DefType(def interface{})
-	Def(name string, def interface{})
+	Def(name string, resource interface{})
 	Bind(name string, typ string, res string, fields []string)
 	Index(typ string, index I)
 	R(resId *ResId, ctx *Context) (res Resource, err error)
@@ -1104,16 +1123,16 @@ func (r *rest) defSelf(typ string) {
 		Unique: true,
 	})
 }
-func (r *rest) Def(name string, def interface{}) {
-	switch q := def.(type) {
+func (r *rest) Def(name string, resource interface{}) {
+	switch res := resource.(type) {
 	case FieldResource:
-		r.defFieldResource(name, q)
+		r.defFieldResource(name, res)
 	case SelectorResource:
-		r.defSelectorResource(name, q)
+		r.defSelectorResource(name, res)
 	case CustomResource:
-		r.defCustomResource(name, q)
+		r.defCustomResource(name, res)
 	default:
-		panic(fmt.Sprintf("unknown resource type: %v", reflect.TypeOf(def)))
+		panic(fmt.Sprintf("unknown resource type: %v", reflect.TypeOf(resource)))
 	}
 }
 
@@ -1638,7 +1657,7 @@ func (res *resource) Patch(request interface{}) (response interface{}, err error
 	return
 }
 func (res *resource) NewRequest() interface{} {
-	return reflect.New(res.r.types[res.cq.RequestType]).Interface()
+	return res.r.newStruct(res.cq.RequestType)
 }
 func (r *rest) queryRes(cq *CustomResource, resId *ResId, ctx *Context) (res Resource, err error) {
 	return &resource{cq, resId, ctx, r}, nil

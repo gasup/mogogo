@@ -677,3 +677,44 @@ func ExampleFieldResourceGet2() {
 	//Hello 0
 
 }
+func ExampleBaseLoad() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	err = ms.DB("rest_test").C("ss").DropCollection()
+	if err != nil {
+		panic(err)
+	}
+	s := Dial(ms, "rest_test")
+	rest := s.(*rest)
+	s.DefType(SS{})
+	s.Def("test-ss", FieldResource{
+		Type:  "SS",
+		Allow: GET | POST,
+	})
+	ctx := s.NewContext()
+	defer ctx.Close()
+	uri, err := ResIdParse("/test-ss")
+	if err != nil {
+		panic(err)
+	}
+	r, err := s.R(uri, ctx)
+	if err != nil {
+		panic(err)
+	}
+	data := SS{S1: "Hello World"}
+	resp, err := r.Post(&data)
+	if err != nil {
+		panic(err)
+	}
+	ss := rest.newStruct("SS").(*SS)
+	ss.id = resp.(*SS).id
+	err = ss.Load(ctx)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(ss.S1)
+	//Output:Hello World
+}

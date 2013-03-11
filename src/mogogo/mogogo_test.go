@@ -19,14 +19,14 @@ func TestParseURL1(t *testing.T) {
 		"/hello?q=abc",
 	}
 	for _, tc := range testCase {
-		_, err := URIParse(tc)
+		_, err := ResIdParse(tc)
 		if err != nil {
 			t.Errorf("url: %s, err: %v", tc, err)
 		}
 	}
 }
 func TestParseURL2(t *testing.T) {
-	uri, err := URIParse("/%E5%88%98%E5%85%B8?a=1&b=2")
+	uri, err := ResIdParse("/%E5%88%98%E5%85%B8?a=1&b=2")
 	if err != nil || len(uri.path) != 1 || uri.path[0] != "刘典" {
 		t.Errorf("uri: %v, err: %v", uri, err)
 	}
@@ -36,27 +36,27 @@ func TestParseURL2(t *testing.T) {
 	}
 }
 func TestParseURL3(t *testing.T) {
-	uri, err := URIParse("/")
+	uri, err := ResIdParse("/")
 	if err != nil || len(uri.path) != 1 || uri.path[0] != "" {
 		t.Errorf("uri: %v, err: %v", uri, err)
 	}
 }
 func TestParseURL4(t *testing.T) {
-	_, err := URIParse("%E5%88%98%E5%85%B8?a=1&b=2")
+	_, err := ResIdParse("%E5%88%98%E5%85%B8?a=1&b=2")
 	if err == nil {
 		t.Fail()
 	}
 }
 
-func ExampleURI1() {
-	uri := &URI{nil, []string{"你好", "hello"}, map[string]string{"a": "1"}}
+func ExampleResId1() {
+	uri := &ResId{nil, []string{"你好", "hello"}, map[string]string{"a": "1"}}
 	fmt.Println(uri.String())
 	//Output:/%E4%BD%A0%E5%A5%BD/hello?a=1
 }
 
-func ExampleURI2() {
+func ExampleResId2() {
 	u, _ := url.Parse("http://www.liudian.com/a/b")
-	uri := &URI{nil, []string{"你好", "hello"}, map[string]string{"a": "1"}}
+	uri := &ResId{nil, []string{"你好", "hello"}, map[string]string{"a": "1"}}
 	fmt.Println(uri.URLWithBase(u))
 	//Output:http://www.liudian.com/%E4%BD%A0%E5%A5%BD/hello?a=1
 }
@@ -389,7 +389,7 @@ func ExampleFieldResourcePost1() {
 	})
 	ctx := s.NewContext()
 	defer ctx.Close()
-	uri, err := URIParse("/test-ss")
+	uri, err := ResIdParse("/test-ss")
 	if err != nil {
 		panic(err)
 	}
@@ -448,7 +448,7 @@ func ExampleFieldResourcePost2() {
 	}
 	ctx.Set("CS2", ss)
 	ctx.Set("CS3", ss)
-	uri, err := URIParse("/test-sss/hello-world/123")
+	uri, err := ResIdParse("/test-sss/hello-world/123")
 	if err != nil {
 		panic(err)
 	}
@@ -507,7 +507,7 @@ func ExampleFieldResourceDelete1() {
 	}
 	ctx.Set("CS2", ss)
 	ctx.Set("CS3", ss)
-	uri, err := URIParse("/test-sss/hello-world/456")
+	uri, err := ResIdParse("/test-sss/hello-world/456")
 	if err != nil {
 		panic(err)
 	}
@@ -558,7 +558,7 @@ func ExampleFieldResourcePut1() {
 	}
 	ctx.Set("CS2", ss)
 	ctx.Set("CS3", ss)
-	uri, err := URIParse("/test-sss/hello-world/456")
+	uri, err := ResIdParse("/test-sss/hello-world/456")
 	if err != nil {
 		panic(err)
 	}
@@ -597,7 +597,7 @@ func ExampleFieldResourceGet1() {
 	})
 	ctx := s.NewContext()
 	defer ctx.Close()
-	uri, err := URIParse("/test-ss")
+	uri, err := ResIdParse("/test-ss")
 	if err != nil {
 		panic(err)
 	}
@@ -636,7 +636,7 @@ func ExampleFieldResourceGet2() {
 	})
 	ctx := s.NewContext()
 	defer ctx.Close()
-	uri, err := URIParse("/test-ss")
+	uri, err := ResIdParse("/test-ss")
 	if err != nil {
 		panic(err)
 	}

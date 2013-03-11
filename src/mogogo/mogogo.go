@@ -69,26 +69,26 @@ func (re *Error) Error() string {
 	return ret
 }
 
-type URI struct {
+type ResId struct {
 	r           *rest
 	path        []string
 	QueryParams map[string]string
 }
 
-func (uri *URI) NumSegment() int {
-	return len(uri.path) - 1
+func (resId *ResId) NumSegment() int {
+	return len(resId.path) - 1
 }
-func (uri *URI) Segment(index int) (val interface{}, err error) {
-	cq := uri.r.queries[uri.path[0]]
-	if uri.NumSegment() != len(cq.PathSegmentsType) {
-		msg := fmt.Sprintf("path need %d segments, got %d", len(cq.PathSegmentsType)+1, uri.NumSegment()+1)
+func (resId *ResId) Segment(index int) (val interface{}, err error) {
+	cq := resId.r.queries[resId.path[0]]
+	if resId.NumSegment() != len(cq.PathSegmentsType) {
+		msg := fmt.Sprintf("path need %d segments, got %d", len(cq.PathSegmentsType)+1, resId.NumSegment()+1)
 		return nil, &Error{Code: BadRequest, Msg: msg}
 	}
-	if index < 0 || index >= uri.NumSegment() {
+	if index < 0 || index >= resId.NumSegment() {
 		panic(fmt.Sprintf("index out of bound: %d", index))
 	}
 	typ := cq.PathSegmentsType[index]
-	elem := uri.path[index+1]
+	elem := resId.path[index+1]
 	switch typ {
 	case "int":
 		val, err = strconv.Atoi(elem)
@@ -97,30 +97,30 @@ func (uri *URI) Segment(index int) (val interface{}, err error) {
 	case "bool":
 		val, err = strconv.ParseBool(elem)
 	default:
-		val, err = uri.r.newWithId(typ, elem)
+		val, err = resId.r.newWithId(typ, elem)
 	}
 	return
 }
-func (uri *URI) URLWithBase(base *url.URL) *url.URL {
-	u := uri.url()
+func (resId *ResId) URLWithBase(base *url.URL) *url.URL {
+	u := resId.url()
 	u.Scheme = base.Scheme
 	u.Host = base.Host
 	return u
 }
-func (uri *URI) url() *url.URL {
+func (resId *ResId) url() *url.URL {
 	var u url.URL
-	u.Path = "/" + strings.Join(uri.path, "/")
+	u.Path = "/" + strings.Join(resId.path, "/")
 	vals := make(url.Values)
-	for k, v := range uri.QueryParams {
+	for k, v := range resId.QueryParams {
 		vals.Add(k, v)
 	}
 	u.RawQuery = vals.Encode()
 	return &u
 }
-func (uri *URI) String() string {
-	return uri.url().String()
+func (resId *ResId) String() string {
+	return resId.url().String()
 }
-func URIParse(s string) (uri *URI, err error) {
+func ResIdParse(s string) (resId *ResId, err error) {
 	url, err := url.Parse(s)
 	if err != nil {
 		return nil, err
@@ -128,14 +128,37 @@ func URIParse(s string) (uri *URI, err error) {
 	if url.Path[0] != '/' {
 		return nil, fmt.Errorf("must absolute url. %s", s)
 	}
-	uri = new(URI)
-	uri.path = strings.Split(url.Path[1:], "/")
-	uri.QueryParams = make(map[string]string)
+	resId = new(ResId)
+	resId.path = strings.Split(url.Path[1:], "/")
+	resId.QueryParams = make(map[string]string)
 	for k, v := range url.Query() {
-		uri.QueryParams[k] = v[0]
+		resId.QueryParams[k] = v[0]
 	}
 	return
 
+}
+func NewResId(name string, segments ...interface{})  *ResId {
+	ret := new(ResId)
+	ret.path = make([]string, len(segments))
+	for i, seg := range segments {
+		switch sv := seg.(type) {
+		case string:
+			ret.path[i] = sv
+		case bool:
+			ret.path[i] = strconv.FormatBool(sv)
+		case int:
+			ret.path[i] = strconv.Itoa(sv)
+		default:
+			st := reflect.TypeOf(sv)
+			if !(st.Kind() == reflect.Ptr && st.Elem().Kind() == reflect.Struct) {
+				panic(fmt.Sprintf("type for segment %d must pointer of struct", i))
+			}
+			base := getBase(reflect.ValueOf(sv).Elem())
+			ret.path[i] = base.id.Hex()
+		}
+	}
+	ret.QueryParams = make(map[string]string)
+	return ret
 }
 
 //被 rest 管理的 struct 必须包含 Base.
@@ -171,8 +194,8 @@ func getBase(v reflect.Value) *Base {
 	return v.FieldByName("Base").Addr().Interface().(*Base)
 }
 
-func (b *Base) Self() *URI {
-	return &URI{b.r, []string{typeNameToQueryName(b.t), b.id.Hex()}, nil}
+func (b *Base) Self() *ResId {
+	return &ResId{b.r, []string{typeNameToQueryName(b.t), b.id.Hex()}, nil}
 }
 
 func (b *Base) Load() error {
@@ -322,14 +345,14 @@ func (ctx *Context) coll(typ string) *mgo.Collection {
 }
 
 type Req struct {
-	*URI
+	*ResId
 	Method  Method
 	Body    interface{}
 	RawBody interface{}
 }
 type Slice interface {
-	Prev() *URI
-	Next() *URI
+	Prev() *ResId
+	Next() *ResId
 	HasCount() bool
 	Count() int
 	HasLimit()
@@ -356,9 +379,9 @@ type Session interface {
 	NewContext() *Context
 	DefType(def interface{})
 	Def(name string, def interface{})
-	Bind(name string, typ string, query string, fields []string)
+	Bind(name string, typ string, res string, fields []string)
 	Index(typ string, index I)
-	R(uri *URI, ctx *Context) (res Resource, err error)
+	R(resId *ResId, ctx *Context) (res Resource, err error)
 }
 
 type I struct {
@@ -386,7 +409,7 @@ type selectorIter struct {
 	countNum   int
 	limit      int
 	pull       bool
-	uri        *URI
+	resId        *ResId
 	query      *mgo.Query
 	iter       *mgo.Iter
 }
@@ -437,7 +460,7 @@ func (r *rest) NewContext() *Context {
 }
 
 type bind struct {
-	query  string
+	res  string
 	fields []string
 }
 
@@ -1016,9 +1039,9 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}, baseURL *url
 	}
 	return nil
 }
-func (r *rest) Bind(name string, typ string, query string, fields []string) {
+func (r *rest) Bind(name string, typ string, res string, fields []string) {
 	r.checkType(typ)
-	r.checkQuery(query)
+	r.checkQuery(res)
 	if name == "" {
 		panic("name is empty")
 	}
@@ -1030,12 +1053,12 @@ func (r *rest) Bind(name string, typ string, query string, fields []string) {
 	if _, ok = bt[name]; ok {
 		panic(fmt.Sprintf("'%s' already bind", name))
 	}
-	bt[name] = &bind{query, fields}
+	bt[name] = &bind{res, fields}
 }
 func (r *rest) registerQuery(name string, cq CustomResource) {
 	checkQueryName(name)
 	if _, ok := r.queries[name]; ok {
-		panic(fmt.Sprintf("query '%s' already defined", name))
+		panic(fmt.Sprintf("resource '%s' already defined", name))
 	}
 	r.queries[name] = &cq
 }
@@ -1090,7 +1113,7 @@ func (r *rest) Def(name string, def interface{}) {
 	case CustomResource:
 		r.defCustomResource(name, q)
 	default:
-		panic(fmt.Sprintf("unknown query type: %v", reflect.TypeOf(def)))
+		panic(fmt.Sprintf("unknown resource type: %v", reflect.TypeOf(def)))
 	}
 }
 
@@ -1267,7 +1290,7 @@ func (h *fqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) 
 			count:      h.fq.Count,
 			limit:      h.fq.Limit,
 			pull:       h.fq.Pull,
-			uri:        req.URI,
+			resId:        req.ResId,
 			query:      ctx.coll(h.fq.Type).Find(q),
 		}, err
 
@@ -1415,7 +1438,7 @@ func (r *rest) fieldsToPathSegmentsType(t reflect.Type, fields []string) []strin
 }
 func checkFieldResource(fq *FieldResource) {
 	if fq.Allow&PUT != 0 && !fq.Unique {
-		panic("PUT only support unique field query")
+		panic("PUT only support unique field resource")
 	}
 }
 func (r *rest) defFieldResource(name string, fq FieldResource) {
@@ -1522,7 +1545,7 @@ func (r *rest) newWithId(typ string, hex string) (val interface{}, err error) {
 
 type resource struct {
 	cq  *CustomResource
-	uri *URI
+	resId *ResId
 	ctx *Context
 	r   *rest
 }
@@ -1556,7 +1579,7 @@ func (res *resource) Get() (response interface{}, err error) {
 	if !ok {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
-	req := &Req{URI: res.uri, Method: GET}
+	req := &Req{ResId: res.resId, Method: GET}
 	response, err = getable.Get(req, res.ctx)
 	res.checkResponse(response, err)
 	return
@@ -1571,7 +1594,7 @@ func (res *resource) Put(request interface{}) (response interface{}, err error) 
 	if err != nil {
 		return nil, err
 	}
-	req := &Req{URI: res.uri, Method: GET, Body: body, RawBody: request}
+	req := &Req{ResId: res.resId, Method: GET, Body: body, RawBody: request}
 	response, err = putable.Put(req, res.ctx)
 	res.checkResponse(response, err)
 	return
@@ -1582,7 +1605,7 @@ func (res *resource) Delete() (response interface{}, err error) {
 	if !ok {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
-	req := &Req{URI: res.uri, Method: GET}
+	req := &Req{ResId: res.resId, Method: GET}
 	response, err = deletable.Delete(req, res.ctx)
 	res.checkResponse(response, err)
 	return
@@ -1597,7 +1620,7 @@ func (res *resource) Post(request interface{}) (response interface{}, err error)
 	if err != nil {
 		return nil, err
 	}
-	req := &Req{URI: res.uri, Method: GET, Body: body, RawBody: request}
+	req := &Req{ResId: res.resId, Method: GET, Body: body, RawBody: request}
 	response, err = postable.Post(req, res.ctx)
 	res.checkResponse(response, err)
 	return
@@ -1609,7 +1632,7 @@ func (res *resource) Patch(request interface{}) (response interface{}, err error
 		return nil, &Error{Code: MethodNotAllowed}
 	}
 
-	req := &Req{URI: res.uri, Method: GET, Body: nil, RawBody: request}
+	req := &Req{ResId: res.resId, Method: GET, Body: nil, RawBody: request}
 	response, err = patchable.Patch(req, res.ctx)
 	res.checkResponse(response, err)
 	return
@@ -1617,18 +1640,18 @@ func (res *resource) Patch(request interface{}) (response interface{}, err error
 func (res *resource) NewRequest() interface{} {
 	return reflect.New(res.r.types[res.cq.RequestType]).Interface()
 }
-func (r *rest) queryRes(cq *CustomResource, uri *URI, ctx *Context) (res Resource, err error) {
-	return &resource{cq, uri, ctx, r}, nil
+func (r *rest) queryRes(cq *CustomResource, resId *ResId, ctx *Context) (res Resource, err error) {
+	return &resource{cq, resId, ctx, r}, nil
 }
-func (r *rest) R(uri *URI, ctx *Context) (res Resource, err error) {
-	uri.r = r
-	name := uri.path[0]
+func (r *rest) R(resId *ResId, ctx *Context) (res Resource, err error) {
+	resId.r = r
+	name := resId.path[0]
 	if qry, ok := r.queries[name]; ok {
 		if isSysQueryName(name) && !ctx.Sys {
 			return nil, &Error{Code: Forbidden, Msg: "private url"}
 		}
-		return r.queryRes(qry, uri, ctx)
+		return r.queryRes(qry, resId, ctx)
 	}
-	msg := fmt.Sprintf("'%s' not found", uri.String())
+	msg := fmt.Sprintf("'%s' not found", resId.String())
 	return nil, &Error{Code: NotFound, Msg: msg}
 }

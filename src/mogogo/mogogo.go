@@ -338,12 +338,12 @@ type FieldResource struct {
 }
 
 type SelectorResource struct {
-	Type string
-	SelectorFunc func(req *Req, ctx *Context) (selector map[string]interface{}, err error)
-	SortFields   []string
+	Type             string
+	SelectorFunc     func(req *Req, ctx *Context) (selector map[string]interface{}, err error)
+	SortFields       []string
 	PathSegmentTypes []string
-	Count        bool
-	Limit        int
+	Count            bool
+	Limit            int
 }
 
 type Getable interface {
@@ -1513,10 +1513,12 @@ func (r *rest) fieldsToPathSegmentTypes(t reflect.Type, fields []string) []strin
 	}
 	return ret
 }
+
 type sqHandler struct {
 	r  *rest
 	sq *SelectorResource
 }
+
 func newSQHandler(r *rest, sq *SelectorResource) *sqHandler {
 	return &sqHandler{r, sq}
 }
@@ -1534,7 +1536,7 @@ func (h *sqHandler) toMgoSelSlice(elem interface{}) (selelem interface{}) {
 	t := v.Type()
 	if t.Elem().Kind() == reflect.Interface {
 		ret := make([]interface{}, v.Len())
-		for i:=0; i<v.Len(); i++ {
+		for i := 0; i < v.Len(); i++ {
 			ret[i] = h.toMgoSelElem(v.Index(i).Interface())
 		}
 		selelem = ret

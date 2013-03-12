@@ -782,8 +782,10 @@ func ExampleBind() {
 	//true
 	//2
 }
+
 type array []interface{}
 type m map[string]interface{}
+
 func ExampleToMgoSelector() {
 	ms, err := mgo.Dial("localhost")
 	if err != nil {
@@ -793,19 +795,19 @@ func ExampleToMgoSelector() {
 	session := Dial(ms, "rest_test")
 	session.DefType(S{})
 	rest := session.(*rest)
-	sq := SelectorResource{Type:"S"}
+	sq := SelectorResource{Type: "S"}
 	h := newSQHandler(rest, &sq)
 	tm1, _ := time.Parse(time.RFC3339, "2013-03-01T08:16:47Z")
-	s, _ := rest.newWithId("S","513063ef69ca944b1000000a")
+	s, _ := rest.newWithId("S", "513063ef69ca944b1000000a")
 	s1 := s.(*S)
 	m := map[string]interface{}{
-		"S1":"Hello",
-		"Id":s1,
-		"A1":[]interface{}{"a","b","c"},
-		"A2":m{"$in":[]*S{s1,s1,s1}},
-		"T1":tm1,
+		"S1": "Hello",
+		"Id": s1,
+		"A1": []interface{}{"a", "b", "c"},
+		"A2": m{"$in": []*S{s1, s1, s1}},
+		"T1": tm1,
 		//db.places.find( { loc: { $within: { $centerSphere: [ [ -74, 40.74 ] , 100 / 6378.137 ] } } } )
-		"G1":m{"$within":m{"$centerSphere":array{Geo{La:1.2,Lo:3.4}, 100/6378.137}}},
+		"G1": m{"$within": m{"$centerSphere": array{Geo{La: 1.2, Lo: 3.4}, 100 / 6378.137}}},
 	}
 	fmt.Println(h.toMgoSelector(m))
 	//Output:Hello
@@ -827,13 +829,13 @@ func ExampleSelectorResource() {
 		Allow: GET | POST,
 	})
 	s.Def("test-ss-sel", SelectorResource{
-		Type:  "SS",
-		SelectorFunc:func(req *Req, ctx *Context) (map[string]interface{}, error) {
-			return map[string]interface{} {
-				"S1": m{"$gt":"Hello 2"},
+		Type: "SS",
+		SelectorFunc: func(req *Req, ctx *Context) (map[string]interface{}, error) {
+			return map[string]interface{}{
+				"S1": m{"$gt": "Hello 2"},
 			}, nil
 		},
-		SortFields:[]string{"S1"},
+		SortFields: []string{"S1"},
 	})
 	ctx := s.NewContext()
 	defer ctx.Close()

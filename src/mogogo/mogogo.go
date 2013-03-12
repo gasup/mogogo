@@ -15,7 +15,6 @@ import (
 
 type ErrorCode uint
 
-//Same As HTTP Status
 const (
 	BadRequest          = 400
 	Forbidden           = 403
@@ -172,7 +171,6 @@ func NewResId(name string, segments ...interface{}) *ResId {
 	return ret
 }
 
-//被 rest 管理的 struct 必须包含 Base.
 type Base struct {
 	t      string
 	id     bson.ObjectId
@@ -267,7 +265,6 @@ func (b *Base) AllRel() map[string]*ResId {
 	return ret
 }
 
-//地理位置
 type Geo struct {
 	Lo float64
 	La float64
@@ -328,9 +325,6 @@ func (m Method) String() string {
 	return ret
 }
 
-//Field Query
-//指定 SortFields 时不可以开启 Pull
-//Unique 为 true 时不支持 POST, 为 false 时不支持 PUT
 type FieldResource struct {
 	Type       string
 	Allow      Method
@@ -343,14 +337,13 @@ type FieldResource struct {
 	Pull       bool
 }
 
-//Selector Query, 只支持 GET
 type SelectorResource struct {
-	ResponseType string
+	Type string
 	SelectorFunc func(req *Req, ctx *Context) (selector map[string]interface{}, err error)
 	SortFields   []string
 	PathSegmentTypes []string
 	Count        bool
-	Limit        uint
+	Limit        int
 }
 
 type Getable interface {
@@ -369,7 +362,6 @@ type Patchable interface {
 	Patch(req *Req, ctx *Context) (result interface{}, err error)
 }
 
-//Custom Query
 type CustomResource struct {
 	RequestType      string
 	ResponseType     string
@@ -579,6 +571,8 @@ func (r *rest) bsonElemToValue(v reflect.Value, t reflect.Type) reflect.Value {
 		ret = r.bsonElemToSlice(v, t)
 	case reflect.Struct:
 		ret = r.bsonElemToStruct(v, t)
+	case reflect.Ptr:
+		ret = r.bsonElemToValue(v, t.Elem()).Addr()
 	default:
 		panic(fmt.Sprintf("not support type: '%v'", t))
 	}
@@ -591,6 +585,9 @@ func (r *rest) bsonToStruct(b bson.M, s interface{}) {
 	base.id = getCheckNil(b, "_id").(bson.ObjectId)
 	base.mt = getCheckNil(b, "mt").(time.Time)
 	base.ct = getCheckNil(b, "ct").(time.Time)
+	base.t = t.Name()
+	base.self = s
+	base.r = r
 	for i := 0; i < t.NumField(); i++ {
 		sf := t.Field(i)
 		if sf.Anonymous && sf.Type == baseType {
@@ -616,7 +613,6 @@ func (r *rest) bsonToStruct(b bson.M, s interface{}) {
 		}
 	}
 	base.loaded = true
-	base.r = r
 }
 
 func (r *rest) sliceToMapElem(v reflect.Value, t reflect.Type, baseURL *url.URL) interface{} {
@@ -760,6 +756,8 @@ func (r *rest) valueToBsonElem(v reflect.Value, t reflect.Type) interface{} {
 		ret = r.sliceToBsonElem(v, t)
 	case reflect.Struct:
 		ret = r.structToBsonElem(v, t)
+	case reflect.Ptr:
+		ret = r.valueToBsonElem(v.Elem(), t.Elem())
 	default:
 		panic(fmt.Sprintf("not support type: '%v'", t))
 	}
@@ -1052,6 +1050,7 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}, baseURL *url
 			return err
 		}
 		base.t = t.Name()
+		base.self = s
 	}
 	for i := 0; i < t.NumField(); i++ {
 		sf := t.Field(i)
@@ -1514,6 +1513,94 @@ func (r *rest) fieldsToPathSegmentTypes(t reflect.Type, fields []string) []strin
 	}
 	return ret
 }
+type sqHandler struct {
+	r  *rest
+	sq *SelectorResource
+}
+func newSQHandler(r *rest, sq *SelectorResource) *sqHandler {
+	return &sqHandler{r, sq}
+}
+func (h *sqHandler) toMgoSelMap(elem interface{}) (selelem interface{}) {
+	ret := make(map[string]interface{})
+	v := reflect.ValueOf(elem)
+	for _, kv := range v.MapKeys() {
+		vv := v.MapIndex(kv)
+		ret[kv.String()] = h.toMgoSelElem(vv.Interface())
+	}
+	return ret
+}
+func (h *sqHandler) toMgoSelSlice(elem interface{}) (selelem interface{}) {
+	v := reflect.ValueOf(elem)
+	t := v.Type()
+	if t.Elem().Kind() == reflect.Interface {
+		ret := make([]interface{}, v.Len())
+		for i:=0; i<v.Len(); i++ {
+			ret[i] = h.toMgoSelElem(v.Index(i).Interface())
+		}
+		selelem = ret
+	} else {
+		selelem = h.r.sliceToBsonElem(v, t)
+	}
+	return
+}
+func (h *sqHandler) toMgoSelElem(elem interface{}) (selelem interface{}) {
+	v := reflect.ValueOf(elem)
+	t := v.Type()
+	switch t.Kind() {
+	case reflect.Map:
+		selelem = h.toMgoSelMap(elem)
+	case reflect.Slice:
+		selelem = h.toMgoSelSlice(elem)
+	default:
+		selelem = h.r.valueToBsonElem(v, t)
+	}
+	return
+}
+func (h *sqHandler) toMgoSelector(sel map[string]interface{}) (mgosel map[string]interface{}) {
+	typ := h.r.types[h.sq.Type]
+	mgosel = make(map[string]interface{})
+	for k, v := range sel {
+		switch k {
+		case "Id":
+			mgosel["_id"] = h.toMgoSelElem(v)
+		case "CT":
+			mgosel["ct"] = h.toMgoSelElem(v)
+		case "MT":
+			mgosel["mt"] = h.toMgoSelElem(v)
+		default:
+			_, ok := typ.FieldByName(k)
+			if !ok {
+				panic(fmt.Sprintf("field '%s' not found in %v", k, typ))
+			}
+			mgosel[strings.ToLower(k)] = h.toMgoSelElem(v)
+		}
+	}
+	return
+}
+func (h *sqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) {
+	sel, err := h.sq.SelectorFunc(req, ctx)
+	if err != nil {
+		return nil, err
+	}
+	sel = h.toMgoSelector(sel)
+	sortFields := make([]string, 0)
+	if h.sq.SortFields == nil {
+		sortFields = append(sortFields, "-Id")
+	} else {
+		sortFields = append(sortFields, h.sq.SortFields...)
+	}
+	result, err = &selectorIter{
+		r:          h.r,
+		typ:        h.r.types[h.sq.Type],
+		sortFields: h.r.fieldsToKeys(h.r.types[h.sq.Type], sortFields),
+		count:      h.sq.Count,
+		limit:      h.sq.Limit,
+		pull:       false,
+		resId:      req.ResId,
+		query:      ctx.coll(h.sq.Type).Find(sel),
+	}, err
+	return
+}
 func checkFieldResource(fq *FieldResource) {
 	if fq.Allow&PUT != 0 && !fq.Unique {
 		panic("PUT only support unique field resource")
@@ -1529,8 +1616,10 @@ func (r *rest) defFieldResource(name string, fq FieldResource) {
 	r.defCustomResource(name, cq)
 }
 func (r *rest) defSelectorResource(name string, sq SelectorResource) {
-	r.checkType(sq.ResponseType)
-	panic("Not Implement")
+	r.checkType(sq.Type)
+	h := newSQHandler(r, &sq)
+	cq := CustomResource{sq.Type, sq.Type, sq.PathSegmentTypes, h}
+	r.defCustomResource(name, cq)
 }
 func (r *rest) checkPathSegmentTypes(segtype []string) {
 	for _, e := range segtype {

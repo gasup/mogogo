@@ -510,9 +510,10 @@ type rest struct {
 func (r *rest) NewContext() *Context {
 	return &Context{r: r, s: r.s.Copy(), values: make(map[string]interface{})}
 }
+
 type F string
 type bind struct {
-	res    string
+	res        string
 	segmentRef []interface{}
 }
 

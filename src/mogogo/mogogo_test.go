@@ -666,12 +666,16 @@ func ExampleFieldResourceGet2() {
 		ss := resp.(*SS)
 		fmt.Println(ss.S1)
 	}
+	var s1set []string
+	iter.Extract("S1", &s1set)
+	fmt.Println(len(s1set))
 	//Output:5
 	//Hello 4
 	//Hello 3
 	//Hello 2
 	//Hello 1
 	//Hello 0
+	//5
 
 }
 func ExampleBaseLoad() {

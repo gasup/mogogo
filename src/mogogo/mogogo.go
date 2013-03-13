@@ -430,6 +430,7 @@ type Iter interface {
 	Count() (n int)
 	Next() (result interface{}, ok bool)
 	Slice() (slice Slice, err error)
+	Extract(field string, result interface{})
 }
 
 type Resource interface {
@@ -486,6 +487,28 @@ func (si *selectorIter) Count() (n int) {
 		panic(&Error{Code: InternalServerError, Err: err})
 	}
 	return
+}
+func (si *selectorIter) Extract(field string, result interface{}) {
+	if field == "Id" {
+		panic("can't use field Id")
+	}
+	if _, ok := si.typ.FieldByName(field); !ok {
+		panic(fmt.Sprintf("field '%s' not in %v", si.typ))
+	}
+	field = strings.ToLower(field)
+	var all []interface{}
+	err := si.query.Distinct(field, &all)
+	if err != nil {
+		panic(&Error{Code: InternalServerError, Err: si.iter.Err()})
+	}
+	var tmp = make([]interface{}, 0, len(all))
+	for _, v := range all {
+		if v != nil {
+			tmp = append(tmp, v)
+		}
+	}
+	v := reflect.ValueOf(result).Elem()
+	v.Set(si.r.bsonElemToSlice(reflect.ValueOf(tmp), v.Type()))
 }
 func (si *selectorIter) Next() (result interface{}, ok bool) {
 	if si.iter == nil {

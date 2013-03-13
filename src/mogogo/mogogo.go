@@ -74,6 +74,9 @@ type ResId struct {
 	QueryParams map[string]string
 }
 
+func (resId *ResId) IsSys() bool {
+	return isSysQueryName(resId.path[0])
+}
 func (resId *ResId) NumSegment() int {
 	return len(resId.path) - 1
 }
@@ -376,11 +379,17 @@ type CustomResource struct {
 type Context struct {
 	r      *rest
 	s      *mgo.Session
-	Sys    bool
+	sys    bool
 	values map[string]interface{}
 	newval bool
 }
 
+func (ctx *Context) IsSys() bool {
+	return ctx.sys
+}
+func (ctx *Context) SetSys(b bool) {
+	ctx.sys = b
+}
 func (ctx *Context) Get(key string) (val interface{}, ok bool) {
 	val, ok = ctx.values[key]
 	return
@@ -1834,8 +1843,8 @@ func (r *rest) R(resId *ResId, ctx *Context) (res Resource, err error) {
 	resId.r = r
 	name := resId.path[0]
 	if qry, ok := r.queries[name]; ok {
-		if isSysQueryName(name) && !ctx.Sys {
-			return nil, &Error{Code: Forbidden, Msg: "private url"}
+		if resId.IsSys() && !ctx.IsSys() {
+			return nil, &Error{Code: Forbidden, Msg: "system url"}
 		}
 		return r.queryRes(qry, resId, ctx)
 	}

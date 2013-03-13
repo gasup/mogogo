@@ -720,6 +720,7 @@ type SSChild struct {
 	Base
 	P  *SS
 	S1 string
+	B1 bool
 }
 
 func ExampleBind() {
@@ -743,9 +744,9 @@ func ExampleBind() {
 	s.Def("ss-child", FieldResource{
 		Type:   "SSChild",
 		Allow:  GET | POST,
-		Fields: []string{"P"},
+		Fields: []string{"P", "B1"},
 	})
-	s.Bind("child", "SS", "ss-child", []string{"Id"})
+	s.Bind("child", "SS", "ss-child", []interface{}{F("Id"), true})
 
 	ctx := s.NewContext()
 	defer ctx.Close()
@@ -771,6 +772,7 @@ func ExampleBind() {
 	}
 	sschild = resp.(*SSChild)
 	fmt.Println(sschild.S1)
+	fmt.Println(sschild.B1)
 	fmt.Println(ss.id == sschild.P.id)
 	resp, err = ss.R("child", ctx).Get()
 	if err != nil {
@@ -779,6 +781,7 @@ func ExampleBind() {
 	iter := resp.(Iter)
 	fmt.Println(iter.Count())
 	//Output:Hello Child
+	//true
 	//true
 	//2
 }

@@ -162,7 +162,7 @@ func NewResId(name string, segments ...interface{}) *ResId {
 			} else if st.Kind() == reflect.Struct {
 				base = getBase(reflect.ValueOf(seg))
 			} else {
-				panic(fmt.Sprintf("type for segment %d must struct", i))
+				panic(fmt.Sprintf("type '%v' not support for segment %d", st, i+1))
 			}
 			ret.path[i+1] = base.id.Hex()
 		}
@@ -235,13 +235,17 @@ func (b *Base) Rel(name string) *ResId {
 	if !ok {
 		panic(msg)
 	}
-	segs := make([]interface{}, len(bin.fields))
+	segs := make([]interface{}, len(bin.segmentRef))
 	self := reflect.ValueOf(b.self).Elem()
-	for i, f := range bin.fields {
-		if f == "Id" {
-			segs[i] = b.self
+	for i, v := range bin.segmentRef {
+		if f, ok := v.(F); ok {
+			if f == "Id" {
+				segs[i] = b.self
+			} else {
+				segs[i] = self.FieldByName(string(f)).Interface()
+			}
 		} else {
-			segs[i] = self.FieldByName(f).Interface()
+			segs[i] = v
 		}
 	}
 	return NewResId(bin.res, segs...)
@@ -432,7 +436,7 @@ type Session interface {
 	NewContext() *Context
 	DefType(def interface{})
 	Def(name string, resource interface{})
-	Bind(name string, typ string, res string, fields []string)
+	Bind(name string, typ string, res string, segmentRef []interface{})
 	Index(typ string, index I)
 	R(resId *ResId, ctx *Context) (res Resource, err error)
 }
@@ -506,10 +510,10 @@ type rest struct {
 func (r *rest) NewContext() *Context {
 	return &Context{r: r, s: r.s.Copy(), values: make(map[string]interface{})}
 }
-
+type F string
 type bind struct {
 	res    string
-	fields []string
+	segmentRef []interface{}
 }
 
 func getCheckNil(b bson.M, key string) interface{} {
@@ -574,7 +578,7 @@ func (r *rest) bsonElemToValue(v reflect.Value, t reflect.Type) reflect.Value {
 	case reflect.Ptr:
 		ret = r.bsonElemToValue(v, t.Elem()).Addr()
 	default:
-		panic(fmt.Sprintf("not support type: '%v'", t))
+		panic(fmt.Sprintf("type not support: '%v'", t))
 	}
 	return ret
 }
@@ -646,7 +650,7 @@ func (r *rest) structToMapElem(v reflect.Value, t reflect.Type, baseURL *url.URL
 		geo := v.Interface().(Geo)
 		ret = map[string]interface{}{"lon": geo.Lo, "lat": geo.La}
 	} else {
-		panic(fmt.Sprintf("not support struct type %v", t))
+		panic(fmt.Sprintf("struct type not support %v", t))
 	}
 	return ret
 }
@@ -1094,13 +1098,13 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}, baseURL *url
 	}
 	return nil
 }
-func (r *rest) checkSegmentsType(typ string, fields []string, res string) {
+func (r *rest) checkSegmentsType(typ string, segmentRef []interface{}, res string) {
 	segsType := r.queries[res].PathSegmentTypes
-	if len(segsType) != len(fields) {
-		msg := fmt.Sprintf("fields len is %d but path segments len is %d", len(fields), len(segsType))
+	if len(segsType) != len(segmentRef) {
+		msg := fmt.Sprintf("fields len is %d but path segments len is %d", len(segmentRef), len(segsType))
 		panic(msg)
 	}
-	fieldsType := r.fieldsToPathSegmentTypes(r.types[typ], fields)
+	fieldsType := r.segmentRefToPathSegmentTypes(r.types[typ], segmentRef)
 	for i, t := range fieldsType {
 		st := segsType[i]
 		if t != st {
@@ -1110,10 +1114,10 @@ func (r *rest) checkSegmentsType(typ string, fields []string, res string) {
 	}
 
 }
-func (r *rest) Bind(name string, typ string, res string, fields []string) {
+func (r *rest) Bind(name string, typ string, res string, segmentRef []interface{}) {
 	r.checkType(typ)
 	r.checkQuery(res)
-	r.checkSegmentsType(typ, fields, res)
+	r.checkSegmentsType(typ, segmentRef, res)
 	if name == "" {
 		panic("name is empty")
 	}
@@ -1125,7 +1129,7 @@ func (r *rest) Bind(name string, typ string, res string, fields []string) {
 	if _, ok = bt[name]; ok {
 		panic(fmt.Sprintf("'%s' already bind", name))
 	}
-	bt[name] = &bind{res, fields}
+	bt[name] = &bind{res, segmentRef}
 }
 func (r *rest) registerQuery(name string, cq CustomResource) {
 	checkQueryName(name)
@@ -1475,23 +1479,36 @@ func (h *fqHandler) Patch(req *Req, ctx *Context) (result interface{}, err error
 }
 
 func (r *rest) fieldsToPathSegmentTypes(t reflect.Type, fields []string) []string {
+	segmentRef := make([]interface{}, len(fields))
+	for i, f := range fields {
+		segmentRef[i] = F(f)
+	}
+	return r.segmentRefToPathSegmentTypes(t, segmentRef)
+}
+func (r *rest) segmentRefToPathSegmentTypes(t reflect.Type, segmentRef []interface{}) []string {
 	ret := make([]string, 0)
-	if fields == nil {
+	if segmentRef == nil {
 		return ret
 	}
-	for _, field := range fields {
-		if field == "Id" {
-			ret = append(ret, t.Name())
-			continue
+	for _, ref := range segmentRef {
+		var ft reflect.Type
+		if f, ok := ref.(F); ok {
+			field := string(f)
+			if field == "Id" {
+				ret = append(ret, t.Name())
+				continue
+			}
+			if field == "CT" || field == "MT" {
+				panic(fmt.Sprintf("segment type not support type '%s'", "time.Time"))
+			}
+			sf, ok := t.FieldByName(field)
+			if !ok {
+				panic(fmt.Sprintf("field '%s' not in '%s'", field, t.Name()))
+			}
+			ft = sf.Type
+		} else {
+			ft = reflect.TypeOf(ref)
 		}
-		if field == "CT" || field == "MT" {
-			panic(fmt.Sprintf("segment type not support type '%s'", "time.Time"))
-		}
-		sf, ok := t.FieldByName(field)
-		if !ok {
-			panic(fmt.Sprintf("field '%s' not in '%s'", field, t.Name()))
-		}
-		ft := sf.Type
 		if ft.Kind() == reflect.Ptr {
 			ft = ft.Elem()
 		}

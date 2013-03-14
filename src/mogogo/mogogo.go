@@ -67,21 +67,64 @@ func (re *Error) Error() string {
 	}
 	return ret
 }
-
+type Params map[string]string
+func (p Params) Del(name string) {
+	delete(p, name)
+}
+func (p Params) GetInt(name string) (ret int, err error) {
+	if _, ok := p[name]; !ok {
+		msg := fmt.Sprintf("param '%s' not found", name)
+		return 0, &Error{Code: BadRequest, Msg:msg}
+	}
+	return parseParamInt(p, name, 0)
+}
+func (p Params) GetBool(name string) (ret bool, err error) {
+	if _, ok := p[name]; !ok {
+		msg := fmt.Sprintf("param '%s' not found", name)
+		return false, &Error{Code: BadRequest, Msg:msg}
+	}
+	return parseParamBool(p, name, false)
+}
+func (p Params) GetString(name string) (ret string, err error) {
+	if _, ok := p[name]; !ok {
+		msg := fmt.Sprintf("param '%s' not found", name)
+		return "", &Error{Code: BadRequest, Msg:msg}
+	}
+	return parseParamString(p, name, "")
+}
+func (p Params) GetFloat(name string) (ret float64, err error) {
+	if _, ok := p[name]; !ok {
+		msg := fmt.Sprintf("param '%s' not found", name)
+		return 0.0, &Error{Code: BadRequest, Msg:msg}
+	}
+	return parseParamFloat(p, name, 0.0)
+}
+func (p Params) SetInt(name string, val int) {
+	p[name] = strconv.Itoa(val)
+}
+func (p Params) SetBool(name string, val bool) {
+	p[name] = strconv.FormatBool(val)
+}
+func (p Params) SetString(name string, val string) {
+	p[name] = val
+}
+func (p Params) SetFloat(name string, val float64) {
+	p[name] = strconv.FormatFloat(val, 'f', -1, 64)
+}
 type ResId struct {
 	r           *rest
 	path        []string
-	QueryParams map[string]string
+	Params Params
 }
 
 func (resId *ResId) Copy() *ResId {
 	path := make([]string, len(resId.path))
 	copy(path, resId.path)
-	params := make(map[string]string)
-	for k, v := range resId.QueryParams {
+	params := make(Params)
+	for k, v := range resId.Params {
 		params[k] = v
 	}
-	return &ResId{r: resId.r, path: path, QueryParams: params}
+	return &ResId{r: resId.r, path: path, Params: params}
 }
 
 func (resId *ResId) IsSys() bool {
@@ -127,7 +170,7 @@ func (resId *ResId) url() *url.URL {
 	var u url.URL
 	u.Path = "/" + strings.Join(resId.path, "/")
 	vals := make(url.Values)
-	for k, v := range resId.QueryParams {
+	for k, v := range resId.Params {
 		vals.Add(k, v)
 	}
 	u.RawQuery = vals.Encode()
@@ -146,9 +189,9 @@ func ResIdParse(s string) (resId *ResId, err error) {
 	}
 	resId = new(ResId)
 	resId.path = strings.Split(url.Path[1:], "/")
-	resId.QueryParams = make(map[string]string)
+	resId.Params = make(map[string]string)
 	for k, v := range url.Query() {
-		resId.QueryParams[k] = v[0]
+		resId.Params[k] = v[0]
 	}
 	return
 
@@ -184,7 +227,7 @@ func NewResId(name string, segments ...interface{}) *ResId {
 			ret.path[i+1] = base.id.Hex()
 		}
 	}
-	ret.QueryParams = make(map[string]string)
+	ret.Params = make(map[string]string)
 	return ret
 }
 
@@ -494,7 +537,9 @@ type selectorSlice struct {
 	more     bool
 	items    []interface{}
 }
-
+func (ss *selectorSlice) Self() *ResId {
+	return ss.self
+}
 func (ss *selectorSlice) HasPrev() bool {
 	return ss.prev != nil
 }
@@ -539,16 +584,31 @@ type selectorIter struct {
 	r          *rest
 	typ        reflect.Type
 	sortFields []string
-	count      bool
+	hasCount   bool
 	limit      int
 	pull       bool
 	resId      *ResId
-	query      *mgo.Query
+	ctx        *Context
+	sel        bson.M
 	iter       *mgo.Iter
 }
 
+func (si *selectorIter) copySel() bson.M {
+	ret := make(bson.M)
+	for k, v := range si.sel {
+		ret[k] = v
+	}
+	return ret
+}
+func (si *selectorIter) selQuery(sel bson.M) *mgo.Query {
+	return si.ctx.coll(si.typ.Name()).Find(sel)
+}
+func (si *selectorIter) query() *mgo.Query {
+	return si.ctx.coll(si.typ.Name()).Find(si.sel)
+}
+
 func (si *selectorIter) Count() (n int) {
-	n, err := si.query.Count()
+	n, err := si.query().Count()
 	if err != nil {
 		panic(&Error{Code: InternalServerError, Err: err})
 	}
@@ -563,7 +623,7 @@ func (si *selectorIter) Extract(field string, result interface{}) {
 	}
 	field = strings.ToLower(field)
 	var all []interface{}
-	err := si.query.Distinct(field, &all)
+	err := si.query().Distinct(field, &all)
 	if err != nil {
 		panic(&Error{Code: InternalServerError, Err: si.iter.Err()})
 	}
@@ -578,7 +638,11 @@ func (si *selectorIter) Extract(field string, result interface{}) {
 }
 func (si *selectorIter) Next() (result interface{}, ok bool) {
 	if si.iter == nil {
-		si.iter = si.query.Sort(si.sortFields...).Iter()
+		if len(si.sortFields) > 0 {
+			si.iter = si.query().Sort(si.sortFields...).Iter()
+		} else {
+			si.iter = si.query().Iter()
+		}
 	}
 	b := make(bson.M)
 	if si.iter.Next(b) {
@@ -593,8 +657,149 @@ func (si *selectorIter) Next() (result interface{}, ok bool) {
 	}
 	return
 }
+/*
+type selectorIter struct {
+	r          *rest
+	typ        reflect.Type
+	sortFields []string
+	count      bool
+	limit      int
+	pull       bool
+	resId      *ResId
+	ctx        *Context
+	sel        bson.M
+	iter       *mgo.Iter
+}
+type selectorSlice struct {
+	self     *ResId
+	prev     *ResId
+	next     *ResId
+	hasCount bool
+	count    int
+	more     bool
+	items    []interface{}
+}
+*/
+const defaultSliceItems = 60
+const maxSkip = 5000
+func (si *selectorIter) timelineSlice() (slice *selectorSlice, err error) {
+	panic("")
+}
+func (si *selectorIter) count() (c int, more bool) {
+	var err error
+	q := si.query()
+	if si.limit > 0 {
+		c, err = q.Limit(si.limit + 1).Count()
+		if c > si.limit {
+			c = si.limit
+			more = true
+		} else {
+			more = false
+		}
+	} else {
+		c, err = q.Count()
+	}
+	if err != nil {
+		panic(&Error{Code: InternalServerError, Err: si.iter.Err()})
+	}
+	return
+}
+func (si *selectorIter) sortedItems(c, n int) (ret []interface{}) {
+	ret = make([]interface{}, 0)
+	if c < 0 {
+		n += c
+		c = 0
+	}
+	if n <= 0 {
+		return
+	}
+	if si.limit > 0 && n > si.limit {
+		n = si.limit
+	}
+	if c > maxSkip {
+		return
+	}
+	var iter *mgo.Iter
+	if len(si.sortFields) > 0 {
+		iter = si.query().Sort(si.sortFields...).Skip(c).Limit(n).Iter()
+	} else {
+		iter = si.query().Skip(c).Limit(n).Iter()
+	}
+	b := make(bson.M)
+	for iter.Next(b) {
+		s := reflect.New(si.typ).Interface()
+		si.r.bsonToStruct(b, s)
+		ret = append(ret, s)
+	}
+	if iter.Err() != nil {
+		panic(&Error{Code: InternalServerError, Err: si.iter.Err()})
+	}
+	return
+}
+func (si *selectorIter) sortedSlice() (slice *selectorSlice, err error) {
+	slice = new(selectorSlice)
+	c, err := parseParamInt(si.resId.Params, "c", 0)
+	if err != nil {
+		return nil, err
+	}
+	n, err := parseParamInt(si.resId.Params, "n", defaultSliceItems)
+	if err != nil {
+		return nil, err
+	}
+	noitems, err := parseParamBool(si.resId.Params, "noitems", false)
+	if err != nil {
+		return nil, err
+	}
+	if c == 0 && si.hasCount {
+		slice.hasCount = true
+		slice.count, slice.more = si.count()
+	}
+	if !noitems {
+		slice.items = si.sortedItems(c, n)
+	}
+	slice.self = si.resSelf()
+	if slice.items != nil {
+		slice.prev = si.resPrev(c, n)
+		slice.next = si.resNext(slice, c, n)
+	}
+	return
+}
+func (si *selectorIter) resNext(slice *selectorSlice, c, n int) *ResId {
+	ret := si.resId.Copy()
+	c += len(slice.items)
+	ret.Params.Del("noitems")
+	ret.Params.SetInt("c", c)
+	ret.Params.SetInt("n", n)
+	return ret
+}
+func (si *selectorIter) resPrev(c, n int) *ResId {
+	ret := si.resId.Copy()
+	c -= n
+	if c < 0 {
+		n += c
+	}
+	if n <= 0 {
+		return nil
+	}
+	ret.Params.Del("noitems")
+	ret.Params.SetInt("c", c)
+	ret.Params.SetInt("n", n)
+	return ret
+}
+func (si *selectorIter) resSelf() *ResId {
+	ret := si.resId.Copy()
+	ret.Params.Del("c")
+	ret.Params.Del("noitems")
+	return ret
+}
 func (si *selectorIter) Slice() (slice Slice, err error) {
-	panic("Not Implement")
+	sf := si.sortFields
+	if len(sf) == 1 && (sf[0] == "_id" || sf[0] == "-_id") {
+		slice, err = si.timelineSlice()
+	} else {
+		slice, err = si.sortedSlice()
+	}
+	return
 }
 
 type rest struct {
@@ -1462,11 +1667,12 @@ func (h *fqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) 
 			r:          h.r,
 			typ:        h.r.types[h.fq.Type],
 			sortFields: h.r.fieldsToKeys(h.r.types[h.fq.Type], sortFields),
-			count:      h.fq.Count,
+			hasCount:   h.fq.Count,
 			limit:      h.fq.Limit,
 			pull:       h.fq.Pull,
 			resId:      req.ResId,
-			query:      ctx.coll(h.fq.Type).Find(q),
+			ctx:        ctx,
+			sel:        q,
 		}, err
 
 	}
@@ -1702,20 +1908,19 @@ func (h *sqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) 
 	}
 	sel = h.toMgoSelector(sel)
 	sortFields := make([]string, 0)
-	if h.sq.SortFields == nil {
-		sortFields = append(sortFields, "-Id")
-	} else {
+	if h.sq.SortFields != nil {
 		sortFields = append(sortFields, h.sq.SortFields...)
 	}
 	result, err = &selectorIter{
 		r:          h.r,
 		typ:        h.r.types[h.sq.Type],
 		sortFields: h.r.fieldsToKeys(h.r.types[h.sq.Type], sortFields),
-		count:      h.sq.Count,
+		hasCount:   h.sq.Count,
 		limit:      h.sq.Limit,
 		pull:       false,
 		resId:      req.ResId,
-		query:      ctx.coll(h.sq.Type).Find(sel),
+		ctx:        ctx,
+		sel:        sel,
 	}, err
 	return
 }

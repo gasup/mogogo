@@ -30,7 +30,7 @@ func TestParseURL2(t *testing.T) {
 	if err != nil || len(uri.path) != 1 || uri.path[0] != "刘典" {
 		t.Errorf("uri: %v, err: %v", uri, err)
 	}
-	params := uri.QueryParams
+	params := uri.Params
 	if len(params) != 2 || params["a"] != "1" || params["b"] != "2" {
 		t.Errorf("uri: %v, err: %v", uri, err)
 	}
@@ -898,4 +898,71 @@ func ExampleSelectorResource() {
 	//Output:2
 	//Hello 3
 	//Hello 4
+}
+func ExampleFieldResourceGetSlice() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	err = ms.DB("rest_test").C("ss").DropCollection()
+	if err != nil {
+		panic(err)
+	}
+	s := Dial(ms, "rest_test")
+	s.DefType(SS{})
+	s.DefRes("test-ss", FieldResource{
+		Type:  "SS",
+		Allow: GET | POST,
+		SortFields: []string{"S1"},
+		Count: true,
+		Limit: 4,
+	})
+	ctx := s.NewContext()
+	defer ctx.Close()
+	uri, err := ResIdParse("/test-ss?n=2")
+	if err != nil {
+		panic(err)
+	}
+	r, err := s.R(uri, ctx)
+	if err != nil {
+		panic(err)
+	}
+	for i := 0; i < 5; i++ {
+		data := SS{S1: fmt.Sprintf("Hello %d", i)}
+		_, err := r.Post(&data)
+		if err != nil {
+			panic(err)
+		}
+	}
+	resp, err := r.Get()
+	if err != nil {
+		panic(err)
+	}
+	iter := resp.(Iter)
+	slice, err := iter.Slice()
+	if err != nil { panic(err) }
+	fmt.Println(slice.Count())
+	fmt.Println(slice.More())
+	fmt.Println(slice.HasPrev())
+	for _, i := range slice.Items() {
+		ss := i.(*SS)
+		fmt.Println(ss.S1)
+	}
+	r, err = s.R(slice.Next(), ctx)
+	resp, err = r.Get()
+	iter = resp.(Iter)
+	slice, err = iter.Slice()
+	for _, i := range slice.Items() {
+		ss := i.(*SS)
+		fmt.Println(ss.S1)
+	}
+
+	//Output:4
+	//true
+	//false
+	//Hello 0
+	//Hello 1
+	//Hello 2
+	//Hello 3
 }

@@ -74,6 +74,16 @@ type ResId struct {
 	QueryParams map[string]string
 }
 
+func (resId *ResId) Copy() *ResId {
+	path := make([]string, len(resId.path))
+	copy(path, resId.path)
+	params := make(map[string]string)
+	for k, v := range resId.QueryParams {
+		params[k] = v
+	}
+	return &ResId{r: resId.r, path: path, QueryParams: params}
+}
+
 func (resId *ResId) IsSys() bool {
 	return isSysQueryName(resId.path[0])
 }
@@ -100,6 +110,10 @@ func (resId *ResId) Segment(index int) (val interface{}, err error) {
 		val, err = strconv.ParseBool(elem)
 	default:
 		val, err = resId.r.newWithId(typ, elem)
+	}
+	if err != nil {
+		msg := fmt.Sprintf("parse error at segment %d", index+1)
+		err = &Error{Code: BadRequest, Msg: msg, Err: err}
 	}
 	return
 }
@@ -418,13 +432,16 @@ type Req struct {
 	RawBody interface{}
 }
 type Slice interface {
+	Self() *ResId
+	HasPrev() bool
 	Prev() *ResId
+	HasNext() bool
 	Next() *ResId
 	HasCount() bool
 	Count() int
-	HasLimit()
-	Limit() int
-	Items() interface{}
+	More() bool
+	HasItems() bool
+	Items() []interface{}
 }
 type Iter interface {
 	Count() (n int)
@@ -468,12 +485,61 @@ func Dial(s *mgo.Session, db string) Session {
 	}
 }
 
+type selectorSlice struct {
+	self     *ResId
+	prev     *ResId
+	next     *ResId
+	hasCount bool
+	count    int
+	more     bool
+	items    []interface{}
+}
+
+func (ss *selectorSlice) HasPrev() bool {
+	return ss.prev != nil
+}
+func (ss *selectorSlice) Prev() *ResId {
+	if !ss.HasPrev() {
+		panic("no prev")
+	}
+	return ss.prev
+}
+func (ss *selectorSlice) HasNext() bool {
+	return ss.next != nil
+}
+func (ss *selectorSlice) Next() *ResId {
+	if !ss.HasNext() {
+		panic("no next")
+	}
+	return ss.next
+}
+func (ss *selectorSlice) HasCount() bool {
+	return ss.hasCount
+}
+func (ss *selectorSlice) Count() int {
+	if !ss.HasCount() {
+		panic("no count")
+	}
+	return ss.count
+}
+func (ss *selectorSlice) More() bool {
+	return ss.more
+}
+func (ss *selectorSlice) HasItems() bool {
+	return ss.items == nil
+}
+func (ss *selectorSlice) Items() []interface{} {
+	if ss.items == nil {
+		panic("no items")
+	}
+	return ss.items
+}
+
 type selectorIter struct {
 	r          *rest
 	typ        reflect.Type
 	sortFields []string
 	count      bool
-	countNum   int
 	limit      int
 	pull       bool
 	resId      *ResId
@@ -703,7 +769,7 @@ func (r *rest) valueToMapElem(v reflect.Value, t reflect.Type, baseURL *url.URL)
 	case reflect.Struct:
 		ret = r.structToMapElem(v, t, baseURL)
 	default:
-		panic(fmt.Sprintf("not support type: '%v'", t))
+		panic(fmt.Sprintf("type not support: '%v'", t))
 	}
 	return ret
 }
@@ -796,7 +862,7 @@ func (r *rest) valueToBsonElem(v reflect.Value, t reflect.Type) interface{} {
 	case reflect.Ptr:
 		ret = r.valueToBsonElem(v.Elem(), t.Elem())
 	default:
-		panic(fmt.Sprintf("not support type: '%v'", t))
+		panic(fmt.Sprintf("type not support: '%v'", t))
 	}
 	return ret
 }
@@ -1532,7 +1598,7 @@ func (r *rest) segmentRefToPathSegmentTypes(t reflect.Type, segmentRef []interfa
 				continue
 			}
 			if field == "CT" || field == "MT" {
-				panic(fmt.Sprintf("segment type not support type '%s'", "time.Time"))
+				panic(fmt.Sprintf("segment not support type '%s'", "time.Time"))
 			}
 			sf, ok := t.FieldByName(field)
 			if !ok {
@@ -1557,7 +1623,7 @@ func (r *rest) segmentRefToPathSegmentTypes(t reflect.Type, segmentRef []interfa
 			r.checkHasBase(ft.Name())
 			ret = append(ret, ft.Name())
 		default:
-			panic(fmt.Sprintf("segment type not support type '%v'", ft))
+			panic(fmt.Sprintf("segment not support type '%v'", ft))
 		}
 
 	}

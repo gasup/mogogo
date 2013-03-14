@@ -462,7 +462,7 @@ type Resource interface {
 type Session interface {
 	NewContext() *Context
 	DefType(def interface{})
-	Def(name string, resource interface{})
+	DefRes(name string, resource interface{})
 	Bind(name string, typ string, res string, segmentRef []interface{})
 	Index(typ string, index I)
 	R(resId *ResId, ctx *Context) (res Resource, err error)
@@ -1272,14 +1272,14 @@ func (r *rest) DefType(def interface{}) {
 }
 func (r *rest) defSelf(typ string) {
 	r.checkType(typ)
-	r.Def(typeNameToQueryName(typ), FieldResource{
+	r.DefRes(typeNameToQueryName(typ), FieldResource{
 		Type:   typ,
 		Fields: []string{"Id"},
 		Allow:  GET,
 		Unique: true,
 	})
 }
-func (r *rest) Def(name string, resource interface{}) {
+func (r *rest) DefRes(name string, resource interface{}) {
 	switch res := resource.(type) {
 	case FieldResource:
 		r.defFieldResource(name, res)

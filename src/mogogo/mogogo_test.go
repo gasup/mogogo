@@ -383,7 +383,7 @@ func ExampleFieldResourcePost1() {
 	}
 	s := Dial(ms, "rest_test")
 	s.DefType(SS{})
-	s.Def("test-ss", FieldResource{
+	s.DefRes("test-ss", FieldResource{
 		Type:  "SS",
 		Allow: POST,
 	})
@@ -429,7 +429,7 @@ func ExampleFieldResourcePost2() {
 	rest := s.(*rest)
 	s.DefType(SS{})
 	s.DefType(SSS{})
-	s.Def("test-sss", FieldResource{
+	s.DefRes("test-sss", FieldResource{
 		Type:   "SSS",
 		Allow:  POST,
 		Fields: []string{"S1", "I1"},
@@ -488,7 +488,7 @@ func ExampleFieldResourceDelete1() {
 	rest := s.(*rest)
 	s.DefType(SS{})
 	s.DefType(SSS{})
-	s.Def("test-sss", FieldResource{
+	s.DefRes("test-sss", FieldResource{
 		Type:   "SSS",
 		Allow:  POST | DELETE,
 		Fields: []string{"S1", "I1"},
@@ -538,7 +538,7 @@ func ExampleFieldResourcePut1() {
 	rest := s.(*rest)
 	s.DefType(SS{})
 	s.DefType(SSS{})
-	s.Def("test-sss", FieldResource{
+	s.DefRes("test-sss", FieldResource{
 		Type:   "SSS",
 		Allow:  PUT | DELETE,
 		Fields: []string{"S1", "I1"},
@@ -591,7 +591,7 @@ func ExampleFieldResourceGet1() {
 	}
 	s := Dial(ms, "rest_test")
 	s.DefType(SS{})
-	s.Def("test-ss", FieldResource{
+	s.DefRes("test-ss", FieldResource{
 		Type:  "SS",
 		Allow: POST,
 	})
@@ -630,7 +630,7 @@ func ExampleFieldResourceGet2() {
 	}
 	s := Dial(ms, "rest_test")
 	s.DefType(SS{})
-	s.Def("test-ss", FieldResource{
+	s.DefRes("test-ss", FieldResource{
 		Type:  "SS",
 		Allow: GET | POST,
 	})
@@ -691,7 +691,7 @@ func ExampleBaseLoad() {
 	s := Dial(ms, "rest_test")
 	rest := s.(*rest)
 	s.DefType(SS{})
-	s.Def("test-ss", FieldResource{
+	s.DefRes("test-ss", FieldResource{
 		Type:  "SS",
 		Allow: GET | POST,
 	})
@@ -741,11 +741,11 @@ func ExampleBind() {
 	s := Dial(ms, "rest_test")
 	s.DefType(SS{})
 	s.DefType(SSChild{})
-	s.Def("test-ss", FieldResource{
+	s.DefRes("test-ss", FieldResource{
 		Type:  "SS",
 		Allow: GET | POST,
 	})
-	s.Def("ss-child", FieldResource{
+	s.DefRes("ss-child", FieldResource{
 		Type:   "SSChild",
 		Allow:  GET | POST,
 		Fields: []string{"P", "B1"},
@@ -842,11 +842,11 @@ func ExampleSelectorResource() {
 	}
 	s := Dial(ms, "rest_test")
 	s.DefType(SS{})
-	s.Def("test-ss", FieldResource{
+	s.DefRes("test-ss", FieldResource{
 		Type:  "SS",
 		Allow: GET | POST,
 	})
-	s.Def("test-ss-sel", SelectorResource{
+	s.DefRes("test-ss-sel", SelectorResource{
 		Type: "SS",
 		SelectorFunc: func(req *Req, ctx *Context) (map[string]interface{}, error) {
 			return map[string]interface{}{

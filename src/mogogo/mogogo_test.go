@@ -899,7 +899,86 @@ func ExampleSelectorResource() {
 	//Hello 3
 	//Hello 4
 }
-func ExampleFieldResourceGetSlice() {
+func ExampleFieldResourceGetSlice1() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	err = ms.DB("rest_test").C("ss").DropCollection()
+	if err != nil {
+		panic(err)
+	}
+	s := Dial(ms, "rest_test")
+	s.DefType(SS{})
+	s.DefRes("test-ss", FieldResource{
+		Type:       "SS",
+		Allow:      GET | POST,
+		SortFields: []string{"S1"},
+		Count:      true,
+		Limit:      4,
+	})
+	ctx := s.NewContext()
+	defer ctx.Close()
+	uri, err := ResIdParse("/test-ss?n=2")
+	if err != nil {
+		panic(err)
+	}
+	r, err := s.R(uri, ctx)
+	if err != nil {
+		panic(err)
+	}
+	for i := 0; i < 5; i++ {
+		data := SS{S1: fmt.Sprintf("Hello %d", i)}
+		_, err := r.Post(&data)
+		if err != nil {
+			panic(err)
+		}
+	}
+	resp, err := r.Get()
+	if err != nil {
+		panic(err)
+	}
+	iter := resp.(Iter)
+	slice, err := iter.Slice()
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(slice.Count())
+	fmt.Println(slice.More())
+	fmt.Println(slice.HasPrev())
+	for _, i := range slice.Items() {
+		ss := i.(*SS)
+		fmt.Println(ss.S1)
+	}
+	r, err = s.R(slice.Next(), ctx)
+	resp, err = r.Get()
+	iter = resp.(Iter)
+	slice, err = iter.Slice()
+	for _, i := range slice.Items() {
+		ss := i.(*SS)
+		fmt.Println(ss.S1)
+	}
+	r, err = s.R(slice.Prev(), ctx)
+	resp, err = r.Get()
+	iter = resp.(Iter)
+	slice, err = iter.Slice()
+	for _, i := range slice.Items() {
+		ss := i.(*SS)
+		fmt.Println(ss.S1)
+	}
+
+	//Output:4
+	//true
+	//false
+	//Hello 0
+	//Hello 1
+	//Hello 2
+	//Hello 3
+	//Hello 0
+	//Hello 1
+}
+func ExampleFieldResourceGetSlice2() {
 	ms, err := mgo.Dial("localhost")
 	if err != nil {
 		panic(err)
@@ -914,7 +993,6 @@ func ExampleFieldResourceGetSlice() {
 	s.DefRes("test-ss", FieldResource{
 		Type:  "SS",
 		Allow: GET | POST,
-		SortFields: []string{"S1"},
 		Count: true,
 		Limit: 4,
 	})
@@ -941,7 +1019,9 @@ func ExampleFieldResourceGetSlice() {
 	}
 	iter := resp.(Iter)
 	slice, err := iter.Slice()
-	if err != nil { panic(err) }
+	if err != nil {
+		panic(err)
+	}
 	fmt.Println(slice.Count())
 	fmt.Println(slice.More())
 	fmt.Println(slice.HasPrev())
@@ -957,12 +1037,22 @@ func ExampleFieldResourceGetSlice() {
 		ss := i.(*SS)
 		fmt.Println(ss.S1)
 	}
+	r, err = s.R(slice.Prev(), ctx)
+	resp, err = r.Get()
+	iter = resp.(Iter)
+	slice, err = iter.Slice()
+	for _, i := range slice.Items() {
+		ss := i.(*SS)
+		fmt.Println(ss.S1)
+	}
 
 	//Output:4
 	//true
-	//false
-	//Hello 0
-	//Hello 1
+	//true
+	//Hello 4
+	//Hello 3
 	//Hello 2
+	//Hello 1
+	//Hello 4
 	//Hello 3
 }

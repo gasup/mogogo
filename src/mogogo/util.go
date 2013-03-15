@@ -105,9 +105,11 @@ func parseParamFloat(m Params, key string, def float64) (ret float64, err error)
 func parseParamObjectId(m Params, key string) (ret bson.ObjectId, found bool, err error) {
 	if v, ok := m[key]; ok {
 		ret, err = parseObjectId(v)
-		if err != nil {
+		if err == nil {
+			found = true
+		} else {
 			msg := fmt.Sprintf("param '%s' parse error, want objectId, got '%s'", key, v)
-			ret, found, err = "", true, &Error{Code: BadRequest, Msg: msg, Err: err}
+			ret, found, err = "", false, &Error{Code: BadRequest, Msg: msg, Err: err}
 		}
 	} else {
 		ret, found, err = "", false, nil

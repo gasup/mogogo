@@ -67,35 +67,37 @@ func (re *Error) Error() string {
 	}
 	return ret
 }
+
 type Params map[string]string
+
 func (p Params) Del(name string) {
 	delete(p, name)
 }
 func (p Params) GetInt(name string) (ret int, err error) {
 	if _, ok := p[name]; !ok {
 		msg := fmt.Sprintf("param '%s' not found", name)
-		return 0, &Error{Code: BadRequest, Msg:msg}
+		return 0, &Error{Code: BadRequest, Msg: msg}
 	}
 	return parseParamInt(p, name, 0)
 }
 func (p Params) GetBool(name string) (ret bool, err error) {
 	if _, ok := p[name]; !ok {
 		msg := fmt.Sprintf("param '%s' not found", name)
-		return false, &Error{Code: BadRequest, Msg:msg}
+		return false, &Error{Code: BadRequest, Msg: msg}
 	}
 	return parseParamBool(p, name, false)
 }
 func (p Params) GetString(name string) (ret string, err error) {
 	if _, ok := p[name]; !ok {
 		msg := fmt.Sprintf("param '%s' not found", name)
-		return "", &Error{Code: BadRequest, Msg:msg}
+		return "", &Error{Code: BadRequest, Msg: msg}
 	}
 	return parseParamString(p, name, "")
 }
 func (p Params) GetFloat(name string) (ret float64, err error) {
 	if _, ok := p[name]; !ok {
 		msg := fmt.Sprintf("param '%s' not found", name)
-		return 0.0, &Error{Code: BadRequest, Msg:msg}
+		return 0.0, &Error{Code: BadRequest, Msg: msg}
 	}
 	return parseParamFloat(p, name, 0.0)
 }
@@ -111,9 +113,10 @@ func (p Params) SetString(name string, val string) {
 func (p Params) SetFloat(name string, val float64) {
 	p[name] = strconv.FormatFloat(val, 'f', -1, 64)
 }
+
 type ResId struct {
-	r           *rest
-	path        []string
+	r      *rest
+	path   []string
 	Params Params
 }
 
@@ -537,6 +540,7 @@ type selectorSlice struct {
 	more     bool
 	items    []interface{}
 }
+
 func (ss *selectorSlice) Self() *ResId {
 	return ss.self
 }
@@ -657,33 +661,136 @@ func (si *selectorIter) Next() (result interface{}, ok bool) {
 	}
 	return
 }
-/*
-type selectorIter struct {
-	r          *rest
-	typ        reflect.Type
-	sortFields []string
-	count      bool
-	limit      int
-	pull       bool
-	resId      *ResId
-	ctx        *Context
-	sel        bson.M
-	iter       *mgo.Iter
-}
-type selectorSlice struct {
-	self     *ResId
-	prev     *ResId
-	next     *ResId
-	hasCount bool
-	count    int
-	more     bool
-	items    []interface{}
-}
-*/
+
 const defaultSliceItems = 60
 const maxSkip = 5000
+const maxN = 1000
+
+func reverse(s []interface{}) {
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
+}
+func (si *selectorIter) timelineItemsPrev(next bson.ObjectId, n int) (ret []interface{}) {
+	ret = make([]interface{}, 0)
+	if n <= 0 {
+		return
+	}
+	if si.limit > 0 && n > maxN {
+		n = maxN
+	}
+	sel := si.copySel()
+	sortFields := make([]string, 1)
+	if si.sortFields[0] == "-_id" {
+		sortFields[0] = "_id"
+		sel["_id"] = bson.M{"$gt": next}
+	} else {
+		sortFields[0] = "-_id"
+		sel["_id"] = bson.M{"$lt": next}
+	}
+	iter := si.selQuery(sel).Sort(sortFields...).Limit(n).Iter()
+	b := make(bson.M)
+	for iter.Next(b) {
+		s := reflect.New(si.typ).Interface()
+		si.r.bsonToStruct(b, s)
+		ret = append(ret, s)
+	}
+	if iter.Err() != nil {
+		panic(&Error{Code: InternalServerError, Err: si.iter.Err()})
+	}
+	reverse(ret)
+	return
+}
+func (si *selectorIter) timelineItemsNext(next bson.ObjectId, n int) (ret []interface{}) {
+	ret = make([]interface{}, 0)
+	if n <= 0 {
+		return
+	}
+	if si.limit > 0 && n > maxN {
+		n = maxN
+	}
+	sel := si.copySel()
+	if next != "" {
+		if si.sortFields[0] == "-_id" {
+			sel["_id"] = bson.M{"$lt": next}
+		} else {
+			sel["_id"] = bson.M{"$gt": next}
+		}
+	}
+	iter := si.selQuery(sel).Sort(si.sortFields...).Limit(n).Iter()
+	b := make(bson.M)
+	for iter.Next(b) {
+		s := reflect.New(si.typ).Interface()
+		si.r.bsonToStruct(b, s)
+		ret = append(ret, s)
+	}
+	if iter.Err() != nil {
+		panic(&Error{Code: InternalServerError, Err: si.iter.Err()})
+	}
+	return
+}
 func (si *selectorIter) timelineSlice() (slice *selectorSlice, err error) {
-	panic("")
+	slice = new(selectorSlice)
+	next, foundNext, err := parseParamObjectId(si.resId.Params, "next")
+	if err != nil {
+		return nil, err
+	}
+	prev, foundPrev, err := parseParamObjectId(si.resId.Params, "prev")
+	if err != nil {
+		return nil, err
+	}
+	n, err := parseParamInt(si.resId.Params, "n", defaultSliceItems)
+	if err != nil {
+		return nil, err
+	}
+	noitems, err := parseParamBool(si.resId.Params, "noitems", false)
+	if err != nil {
+		return nil, err
+	}
+	if !foundNext && !foundPrev && si.hasCount {
+		slice.hasCount = true
+		slice.count, slice.more = si.count()
+	}
+	if !noitems {
+		if foundNext {
+			slice.items = si.timelineItemsNext(next, n)
+		} else if foundPrev {
+			slice.items = si.timelineItemsPrev(prev, n)
+		} else {
+			slice.items = si.timelineItemsNext("", n)
+		}
+	}
+	slice.self = si.timelineSelf()
+	if slice.HasItems() || len(slice.items) != 0 {
+		slice.prev = si.timelinePrev(slice)
+		slice.next = si.timelineNext(slice)
+	}
+	return
+}
+func (si *selectorIter) timelineSelf() *ResId {
+	ret := si.resId.Copy()
+	ret.Params.Del("prev")
+	ret.Params.Del("next")
+	ret.Params.Del("noitems")
+	return ret
+}
+func (si *selectorIter) timelinePrev(s *selectorSlice) *ResId {
+	ret := si.resId.Copy()
+	ret.Params.Del("prev")
+	ret.Params.Del("next")
+	ret.Params.Del("noitems")
+	prevId := getBase(reflect.ValueOf(s.items[0]).Elem()).id.Hex()
+	ret.Params.SetString("prev", prevId)
+	return ret
+}
+func (si *selectorIter) timelineNext(s *selectorSlice) *ResId {
+	ret := si.resId.Copy()
+	ret.Params.Del("prev")
+	ret.Params.Del("next")
+	ret.Params.Del("noitems")
+	nextId := getBase(reflect.ValueOf(s.items[len(s.items)-1]).Elem()).id.Hex()
+	ret.Params.SetString("next", nextId)
+	return ret
 }
 func (si *selectorIter) count() (c int, more bool) {
 	var err error
@@ -713,8 +820,8 @@ func (si *selectorIter) sortedItems(c, n int) (ret []interface{}) {
 	if n <= 0 {
 		return
 	}
-	if si.limit > 0 && n > si.limit {
-		n = si.limit
+	if si.limit > 0 && n > maxN {
+		n = maxN
 	}
 	if c > maxSkip {
 		return
@@ -757,14 +864,14 @@ func (si *selectorIter) sortedSlice() (slice *selectorSlice, err error) {
 	if !noitems {
 		slice.items = si.sortedItems(c, n)
 	}
-	slice.self = si.resSelf()
-	if slice.items != nil {
-		slice.prev = si.resPrev(c, n)
-		slice.next = si.resNext(slice, c, n)
+	slice.self = si.sortedSelf()
+	if !slice.HasItems() || len(slice.items) != 0 {
+		slice.prev = si.sortedPrev(c, n)
+		slice.next = si.sortedNext(slice, c, n)
 	}
 	return
 }
-func (si *selectorIter) resNext(slice *selectorSlice, c, n int) *ResId {
+func (si *selectorIter) sortedNext(slice *selectorSlice, c, n int) *ResId {
 	ret := si.resId.Copy()
 	c += len(slice.items)
 	ret.Params.Del("noitems")
@@ -772,7 +879,7 @@ func (si *selectorIter) resNext(slice *selectorSlice, c, n int) *ResId {
 	ret.Params.SetInt("n", n)
 	return ret
 }
-func (si *selectorIter) resPrev(c, n int) *ResId {
+func (si *selectorIter) sortedPrev(c, n int) *ResId {
 	ret := si.resId.Copy()
 	c -= n
 	if c < 0 {
@@ -786,7 +893,7 @@ func (si *selectorIter) resPrev(c, n int) *ResId {
 	ret.Params.SetInt("n", n)
 	return ret
 }
-func (si *selectorIter) resSelf() *ResId {
+func (si *selectorIter) sortedSelf() *ResId {
 	ret := si.resId.Copy()
 	ret.Params.Del("c")
 	ret.Params.Del("noitems")

@@ -595,6 +595,14 @@ func ExampleFieldResourceGet1() {
 		Type:  "SS",
 		Allow: POST,
 	})
+	s.Before(POST, "test-ss", func(req *Req, ctx *Context) (goOn bool, resp interface{}, err error) {
+		fmt.Println("Before Post", req.Body.(*SS).S1)
+		return true, nil, nil
+	});
+	s.After(POST, "test-ss", func(req *Req, ctx *Context, resp interface{}, err error) (goOn bool, newResp interface{}, newErr error) {
+		fmt.Println("After Post", req.Body.(*SS).S1)
+		return true, nil, nil
+	});
 	ctx := s.NewContext()
 	defer ctx.Close()
 	uri, err := ResIdParse("/test-ss")
@@ -616,7 +624,9 @@ func ExampleFieldResourceGet1() {
 		panic(err)
 	}
 	fmt.Println(resp.(*SS).S1)
-	//Output:Hello World
+	//Output:Before Post Hello World
+	//After Post Hello World
+	//Hello World
 }
 func ExampleFieldResourceGet2() {
 	ms, err := mgo.Dial("localhost")
@@ -1071,11 +1081,11 @@ func ExampleToMgoUpdater() {
 	s, _ := rest.newWithId("SS", "513063ef69ca944b1000000a")
 	s1 := s.(*SS)
 	m := M{
-		"set": M{
+		"Set": M{
 			"S1":  "Hello",
 			"ST1": *s1,
 		},
-		"add": M{
+		"Add": M{
 			"A1": "Hello",
 			"A2": *s1,
 			"I1": 10,
@@ -1126,7 +1136,7 @@ func ExampleFieldResourcePatch1() {
 			panic(err)
 		}
 	}
-	_, err = r.Patch(M{"set": M{"S1": "Hello Patch"}})
+	_, err = r.Patch(M{"Set": M{"S1": "Hello Patch"}})
 	if err != nil {
 		panic(err)
 	}

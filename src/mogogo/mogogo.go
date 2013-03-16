@@ -509,11 +509,14 @@ type Resource interface {
 	Post(request interface{}) (response interface{}, err error)
 	Patch(request interface{}) (response interface{}, err error)
 }
-
+type BeforeHookFunc func(req *Req, ctx *Context) (goOn bool, response interface{}, err error) 
+type AfterHookFunc func(req *Req, ctx *Context, response interface{}, err error) (goOn bool, newResp interface{}, newErr error)
 type Session interface {
 	NewContext() *Context
 	DefType(def interface{})
 	DefRes(name string, resource interface{})
+	Before(method Method, res string, hook BeforeHookFunc)
+	After(method Method, res string, hook AfterHookFunc)
 	Bind(name string, typ string, res string, segmentRef []interface{})
 	Index(typ string, index I)
 	R(resId *ResId, ctx *Context) (res Resource, err error)
@@ -533,6 +536,7 @@ func Dial(s *mgo.Session, db string) Session {
 		make(map[string]reflect.Type),
 		make(map[string]*CustomResource),
 		make(map[string]map[string]*bind),
+		make(map[hookKey]interface{}),
 	}
 }
 
@@ -951,6 +955,7 @@ type rest struct {
 	types   map[string]reflect.Type
 	queries map[string]*CustomResource
 	binds   map[string]map[string]*bind
+	hooks map[hookKey]interface{}
 }
 
 func (r *rest) NewContext() *Context {
@@ -969,6 +974,47 @@ func getCheckNil(b bson.M, key string) interface{} {
 		panic(fmt.Sprintf("key '%s' is nil", key))
 	}
 	return ret
+}
+type hookType int
+const (
+	before hookType = iota
+	after
+)
+type hookKey struct {
+	ht hookType
+	m Method
+	r string
+}
+func (r *rest) Before(method Method, res string, hook BeforeHookFunc) {
+	r.checkQuery(res)
+	r.hooks[hookKey{before, method, res}] = hook
+}
+func (r *rest) After(method Method, res string, hook AfterHookFunc) {
+	r.checkQuery(res)
+	r.hooks[hookKey{after, method, res}] = hook
+}
+
+func (r *rest) doBefore(m Method, res string, req *Req, ctx *Context) (goOn bool, response interface{}, err error) {
+	hk := hookKey{before, m, res}
+	hook, ok := r.hooks[hk]
+	if !ok {
+		goOn, response, err = true, nil, nil
+	} else {
+		bhf := hook.(BeforeHookFunc)
+		goOn, response, err = bhf(req, ctx)
+	}
+	return
+}
+func (r *rest) doAfter(m Method, res string, req *Req, ctx *Context, resp interface{}, err error) (goOn bool, newResp interface{}, newErr error) {
+	hk := hookKey{after, m, res}
+	hook, ok := r.hooks[hk]
+	if !ok {
+		goOn, newResp, newErr = true, nil, nil
+	} else {
+		ahf := hook.(AfterHookFunc)
+		goOn, newResp, newErr = ahf(req, ctx, resp, err)
+	}
+	return
 }
 func (r *rest) bsonElemToSlice(v reflect.Value, t reflect.Type) reflect.Value {
 	ret := reflect.MakeSlice(t, v.Len(), v.Len())
@@ -1971,9 +2017,9 @@ func (h *fqHandler) toMgoUpdater(updater M) (ret map[string]interface{}) {
 			panic(fmt.Sprintf("want type %v, got '%v'", reflect.TypeOf(m), reflect.TypeOf(v)))
 		}
 		switch k {
-		case "set":
+		case "Set":
 			h.toMgoUpdaterSetOp(m, ret)
-		case "add":
+		case "Add":
 			h.toMgoUpdaterAddOp(m, ret)
 		default:
 			panic(fmt.Sprintf("unknown op '%s'", k))
@@ -2308,7 +2354,16 @@ func (res *resource) Get() (response interface{}, err error) {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
 	req := &Req{ResId: res.resId, Method: GET}
+	goOn, response, err := res.r.doBefore(GET, res.resId.path[0], req, res.ctx)
+	if !goOn {
+		res.checkResponse(response, err)
+		return
+	}
 	response, err = getable.Get(req, res.ctx)
+	goOn, newResp, newErr := res.r.doAfter(GET, res.resId.path[0], req, res.ctx, response, err)
+	if !goOn {
+		response, err = newResp, newErr
+	}
 	res.checkResponse(response, err)
 	return
 }
@@ -2323,7 +2378,16 @@ func (res *resource) Put(request interface{}) (response interface{}, err error) 
 		return nil, err
 	}
 	req := &Req{ResId: res.resId, Method: GET, Body: body}
+	goOn, response, err := res.r.doBefore(PUT, res.resId.path[0], req, res.ctx)
+	if !goOn {
+		res.checkResponse(response, err)
+		return
+	}
 	response, err = putable.Put(req, res.ctx)
+	goOn, newResp, newErr := res.r.doAfter(PUT, res.resId.path[0], req, res.ctx, response, err)
+	if !goOn {
+		response, err = newResp, newErr
+	}
 	res.checkResponse(response, err)
 	return
 }
@@ -2334,7 +2398,16 @@ func (res *resource) Delete() (response interface{}, err error) {
 		return nil, &Error{Code: MethodNotAllowed}
 	}
 	req := &Req{ResId: res.resId, Method: GET}
+	goOn, response, err := res.r.doBefore(DELETE, res.resId.path[0], req, res.ctx)
+	if !goOn {
+		res.checkResponse(response, err)
+		return
+	}
 	response, err = deletable.Delete(req, res.ctx)
+	goOn, newResp, newErr := res.r.doAfter(DELETE, res.resId.path[0], req, res.ctx, response, err)
+	if !goOn {
+		response, err = newResp, newErr
+	}
 	res.checkResponse(response, err)
 	return
 }
@@ -2349,7 +2422,16 @@ func (res *resource) Post(request interface{}) (response interface{}, err error)
 		return nil, err
 	}
 	req := &Req{ResId: res.resId, Method: GET, Body: body}
+	goOn, response, err := res.r.doBefore(POST, res.resId.path[0], req, res.ctx)
+	if !goOn {
+		res.checkResponse(response, err)
+		return
+	}
 	response, err = postable.Post(req, res.ctx)
+	goOn, newResp, newErr := res.r.doAfter(POST, res.resId.path[0], req, res.ctx, response, err)
+	if !goOn {
+		response, err = newResp, newErr
+	}
 	res.checkResponse(response, err)
 	return
 }
@@ -2361,7 +2443,16 @@ func (res *resource) Patch(request interface{}) (response interface{}, err error
 	}
 
 	req := &Req{ResId: res.resId, Method: GET, Body: request.(M)}
+	goOn, response, err := res.r.doBefore(PATCH, res.resId.path[0], req, res.ctx)
+	if !goOn {
+		res.checkResponse(response, err)
+		return
+	}
 	response, err = patchable.Patch(req, res.ctx)
+	goOn, newResp, newErr := res.r.doAfter(PATCH, res.resId.path[0], req, res.ctx, response, err)
+	if !goOn {
+		response, err = newResp, newErr
+	}
 	res.checkResponse(response, err)
 	return
 }

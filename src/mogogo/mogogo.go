@@ -54,7 +54,7 @@ type Error struct {
 	Code   ErrorCode
 	Msg    string
 	Err    error
-	Fields map[string]error
+	Fields map[string]string
 }
 
 func (re *Error) Error() string {
@@ -418,7 +418,9 @@ type SelectorResource struct {
 	Count            bool
 	Limit            int
 }
-
+type Verifiable interface {
+	Verify() (ok bool, msg string)
+}
 type Getable interface {
 	Get(req *Req, ctx *Context) (result interface{}, err error)
 }
@@ -1559,6 +1561,7 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}, baseURL *url
 		base.t = t.Name()
 		base.self = s
 	}
+	fieldsErr := make(map[string]string)
 	for i := 0; i < t.NumField(); i++ {
 		sf := t.Field(i)
 		if sf.Anonymous && sf.Type == baseType {
@@ -1593,11 +1596,21 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}, baseURL *url
 			return err
 		}
 		if v.IsValid() {
+			verifiable, ok := v.Interface().(Verifiable)
+			if ok {
+				ok, msg := verifiable.Verify()
+				if !ok {
+					fieldsErr[sf.Name] = msg
+				}
+			}
 			fv.Set(v)
 		}
 	}
 	if base != nil {
 		base.loaded = true
+	}
+	if len(fieldsErr) > 0 {
+		return &Error{Code: BadRequest, Fields: fieldsErr}
 	}
 	return nil
 }

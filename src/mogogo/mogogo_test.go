@@ -75,6 +75,12 @@ type SS struct {
 	S1 string
 }
 type UserName string
+type UserNameV string
+
+func (un UserNameV) Verify() (ok bool, msg string) {
+	return false, "too_short"
+}
+
 type S struct {
 	Base
 	S1  string
@@ -328,6 +334,23 @@ func ExampleMapToStruct4() {
 	fmt.Println(s.U2.String())
 	//Output:http://efg.com/abc?a=b
 	///xyz?c=d
+}
+func ExampleMapToStruct5() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	session := Dial(ms, "rest_test")
+	session.DefType(S{})
+	rest := session.(*rest)
+	var s struct {
+		Base
+		F UserNameV
+	}
+	err = rest.mapToStruct(map[string]interface{}{"f": "liudian"}, &s, baseURL1)
+	fmt.Println(err.(*Error).Fields)
+	//Output:map[F:too_short]
 }
 func ExampleStructToMap() {
 	id1 := bson.ObjectIdHex("513063ef69ca944b1000000a")

@@ -43,12 +43,15 @@ func isSysQueryName(qn string) bool {
 }
 
 func indexOf(sa []string, s string) (index int, ok bool) {
+	if sa == nil {
+		return -1, false
+	}
 	for i, v := range sa {
 		if v == s {
 			return i, true
 		}
 	}
-	return 0, false
+	return -1, false
 }
 func parseObjectId(h string) (id bson.ObjectId, err error) {
 	d, err := hex.DecodeString(h)
@@ -115,4 +118,15 @@ func parseParamObjectId(m Params, key string) (ret bson.ObjectId, found bool, er
 		ret, found, err = "", false, nil
 	}
 	return
+}
+func accMapMap(m map[string]interface{}, key0, key1 string, val interface{}) {
+	mv, ok := m[key0]
+	var m1 map[string]interface{}
+	if ok {
+		m1 = mv.(map[string]interface{})
+	} else {
+		m1 = make(map[string]interface{})
+		m[key0] = m1
+	}
+	m1[key1] = val
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 )
+type M map[string]interface{}
 
 type ErrorCode uint
 
@@ -265,6 +266,9 @@ func checkHasBase(t reflect.Type) {
 func getBase(v reflect.Value) *Base {
 	return v.FieldByName("Base").Addr().Interface().(*Base)
 }
+func getBaseValue(v reflect.Value) Base {
+	return v.FieldByName("Base").Interface().(Base)
+}
 
 func (b *Base) Self() *ResId {
 	return &ResId{b.r, []string{typeNameToQueryName(b.t), b.id.Hex()}, nil}
@@ -402,6 +406,7 @@ type FieldResource struct {
 	Count      bool
 	Limit      int
 	Pull       bool
+	PatchFields []string
 }
 
 type SelectorResource struct {
@@ -475,7 +480,6 @@ type Req struct {
 	*ResId
 	Method  Method
 	Body    interface{}
-	RawBody interface{}
 }
 type Slice interface {
 	Self() *ResId
@@ -1174,7 +1178,7 @@ func (r *rest) sliceToBsonElem(v reflect.Value, t reflect.Type) interface{} {
 func (r *rest) structToBsonElem(v reflect.Value, t reflect.Type) interface{} {
 	var ret interface{}
 	if hasBase(t) {
-		ret = getBase(v).id
+		ret = getBaseValue(v).id
 	} else if t == urlType {
 		ret = v.Addr().Interface().(*url.URL).String()
 	} else if t == timeType {
@@ -1187,7 +1191,13 @@ func (r *rest) structToBsonElem(v reflect.Value, t reflect.Type) interface{} {
 	}
 	return ret
 }
+func checkType(t reflect.Type, v reflect.Value) {
+	if t != v.Type() {
+		panic(fmt.Sprintf("want type '%v', got '%v'", t, v.Type()))
+	}
+}
 func (r *rest) valueToBsonElem(v reflect.Value, t reflect.Type) interface{} {
+	checkType(t, v)
 	var ret interface{}
 	switch t.Kind() {
 	case reflect.String:
@@ -1833,7 +1843,7 @@ func (h *fqHandler) Put(req *Req, ctx *Context) (result interface{}, err error) 
 		if base.id == "" {
 			base.id = bson.NewObjectId()
 		}
-		base.mt = bson.Now()
+		base.mt = bson.Now().UTC()
 		base.ct = base.mt
 		base.loaded = true
 		base.r = h.r
@@ -1852,7 +1862,7 @@ func (h *fqHandler) Put(req *Req, ctx *Context) (result interface{}, err error) 
 	} else if err == nil {
 		base := getBase(reflect.ValueOf(body).Elem())
 		base.id = old["_id"].(bson.ObjectId)
-		base.mt = bson.Now()
+		base.mt = bson.Now().UTC()
 		base.ct = old["ct"].(time.Time)
 		base.loaded = true
 		base.r = h.r
@@ -1899,7 +1909,7 @@ func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error)
 	}
 	base := getBase(reflect.ValueOf(body).Elem())
 	base.id = bson.NewObjectId()
-	base.mt = bson.Now()
+	base.mt = bson.Now().UTC()
 	base.ct = base.mt
 	base.loaded = true
 	base.r = h.r
@@ -1917,8 +1927,79 @@ func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error)
 	}
 	return body, nil
 }
+func (h *fqHandler) toMgoUpdaterSetOp(m M, ret map[string]interface{}) {
+	t := h.r.types[h.fq.Type]
+	for k, v := range m {
+		if _, ok := indexOf(h.fq.PatchFields, k); !ok {
+			panic(fmt.Sprintf("field '%s' not allow", k))
+		}
+		fs, ok := t.FieldByName(k)
+		if !ok {
+			panic(fmt.Sprintf("field '%s' not in '%v'", k, t))
+		}
+		accMapMap(ret, "$set", strings.ToLower(k), h.r.valueToBsonElem(reflect.ValueOf(v), fs.Type))
+	}
+}
+func (h *fqHandler) toMgoUpdaterAddOp(m M, ret map[string]interface{}) {
+	t := h.r.types[h.fq.Type]
+	for k, v := range m {
+		if _, ok := indexOf(h.fq.PatchFields, k); !ok {
+			panic(fmt.Sprintf("field '%s' not allow", k))
+		}
+		fs, ok := t.FieldByName(k)
+		if !ok {
+			panic(fmt.Sprintf("field '%s' not in '%v'", k, t))
+		}
+		ft := fs.Type
+		if ft.Kind() == reflect.Ptr {
+			ft = ft.Elem()
+		}
+		switch ft.Kind() {
+		case reflect.Slice:
+			accMapMap(ret, "$addToSet", strings.ToLower(k), h.r.valueToBsonElem(reflect.ValueOf(v), ft.Elem()))
+		default:
+			accMapMap(ret, "$inc", strings.ToLower(k), h.r.valueToBsonElem(reflect.ValueOf(v), ft))
+		}
+	}
+}
+func (h *fqHandler) toMgoUpdater(updater M) (ret map[string]interface{}) {
+	ret = make(map[string]interface{})
+	for k, v:= range updater {
+		m, ok := v.(M)
+		if !ok {
+			panic(fmt.Sprintf("want type %v, got '%v'", reflect.TypeOf(m), reflect.TypeOf(v)))
+		}
+		switch k {
+		case "set":
+			h.toMgoUpdaterSetOp(m, ret)
+		case "add":
+			h.toMgoUpdaterAddOp(m, ret)
+		default:
+			panic(fmt.Sprintf("unknown op '%s'", k))
+		}
+	}
+	accMapMap(ret, "$set", "mt", bson.Now().UTC())
+	return
+}
 func (h *fqHandler) Patch(req *Req, ctx *Context) (result interface{}, err error) {
-	panic("Not Implement")
+	if h.fq.Allow&PATCH == 0 {
+		return nil, &Error{Code: MethodNotAllowed}
+	}
+	q, err := h.query(req, ctx)
+	if err != nil {
+		return nil, err
+	}
+	updater := h.toMgoUpdater(req.Body.(M))
+	_, err = h.coll(ctx).UpdateAll(q, updater)
+	if err != nil {
+		lasterr := err.(*mgo.LastError)
+		if lasterr.Code == 11000 {
+			return nil, &Error{Code: Conflict}
+		} else {
+			return nil, &Error{Code: InternalServerError, Err: err}
+		}
+	}
+	return nil, nil
 }
 
 func (r *rest) fieldsToPathSegmentTypes(t reflect.Type, fields []string) []string {
@@ -1946,7 +2027,7 @@ func (r *rest) segmentRefToPathSegmentTypes(t reflect.Type, segmentRef []interfa
 			}
 			sf, ok := t.FieldByName(field)
 			if !ok {
-				panic(fmt.Sprintf("field '%s' not in '%s'", field, t.Name()))
+				panic(fmt.Sprintf("field '%s' not in '%v'", field, t))
 			}
 			ft = sf.Type
 		} else {
@@ -2062,10 +2143,28 @@ func (h *sqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) 
 	}, err
 	return
 }
+func checkPatchFields(fq *FieldResource) {
+	if fq.PatchFields == nil {
+		return
+	}
+	for _, v := range fq.PatchFields {
+		switch v {
+		case "Id", "CT", "MT":
+			panic(fmt.Sprintf("can't patch field '%s'", v))
+		default:
+			if fq.ContextRef != nil {
+				if _, ok := fq.ContextRef[v]; ok {
+					panic(fmt.Sprintf("can't patch field '%s' which in contextRef", v))
+				}
+			}
+		}
+	}
+}
 func checkFieldResource(fq *FieldResource) {
 	if fq.Allow&PUT != 0 && !fq.Unique {
 		panic("PUT only support unique field resource")
 	}
+	checkPatchFields(fq)
 }
 func (r *rest) defFieldResource(name string, fq FieldResource) {
 	r.checkType(fq.Type)
@@ -2123,7 +2222,7 @@ func (r *rest) fieldsToKeys(typ reflect.Type, fields []string) []string {
 		} else if hf || f == "MT" || f == "CT" {
 			ret = append(ret, p+strings.ToLower(f))
 		} else {
-			panic(fmt.Sprintf("field '%s' not set in '%s'", f, typ))
+			panic(fmt.Sprintf("field '%s' not in '%v'", f, typ))
 		}
 	}
 	return ret
@@ -2222,7 +2321,7 @@ func (res *resource) Put(request interface{}) (response interface{}, err error) 
 	if err != nil {
 		return nil, err
 	}
-	req := &Req{ResId: res.resId, Method: GET, Body: body, RawBody: request}
+	req := &Req{ResId: res.resId, Method: GET, Body: body}
 	response, err = putable.Put(req, res.ctx)
 	res.checkResponse(response, err)
 	return
@@ -2248,7 +2347,7 @@ func (res *resource) Post(request interface{}) (response interface{}, err error)
 	if err != nil {
 		return nil, err
 	}
-	req := &Req{ResId: res.resId, Method: GET, Body: body, RawBody: request}
+	req := &Req{ResId: res.resId, Method: GET, Body: body}
 	response, err = postable.Post(req, res.ctx)
 	res.checkResponse(response, err)
 	return
@@ -2260,7 +2359,7 @@ func (res *resource) Patch(request interface{}) (response interface{}, err error
 		return nil, &Error{Code: MethodNotAllowed}
 	}
 
-	req := &Req{ResId: res.resId, Method: GET, Body: nil, RawBody: request}
+	req := &Req{ResId: res.resId, Method: GET, Body: request.(M)}
 	response, err = patchable.Patch(req, res.ctx)
 	res.checkResponse(response, err)
 	return

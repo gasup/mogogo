@@ -1056,3 +1056,104 @@ func ExampleFieldResourceGetSlice2() {
 	//Hello 4
 	//Hello 3
 }
+func ExampleToMgoUpdater() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	session := Dial(ms, "rest_test")
+	session.DefType(S{})
+	session.DefType(SS{})
+	rest := session.(*rest)
+	fq := FieldResource{Type: "S", PatchFields:[]string{"S1","ST1","A1","A2","I1"}}
+	h := newFQHandler(rest, &fq)
+	s, _ := rest.newWithId("SS", "513063ef69ca944b1000000a")
+	s1 := s.(*SS)
+	m := M{
+		"set": M{
+			"S1": "Hello",
+			"ST1": *s1,
+		},
+		"add": M {
+			"A1": "Hello",
+			"A2": *s1,
+			"I1": 10,
+		},
+	}
+	sel := h.toMgoUpdater(m)
+	set := sel["$set"].(map[string]interface{})
+	inc := sel["$inc"].(map[string]interface{})
+	addToSet := sel["$addToSet"].(map[string]interface{})
+	fmt.Println(set["s1"],set["st1"])
+	fmt.Println(inc["i1"])
+	fmt.Println(addToSet["a1"], addToSet["a2"])
+	//Output:Hello ObjectIdHex("513063ef69ca944b1000000a")
+	//10
+	//Hello ObjectIdHex("513063ef69ca944b1000000a")
+}
+func ExampleFieldResourcePatch1() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	err = ms.DB("rest_test").C("ss").DropCollection()
+	if err != nil {
+		panic(err)
+	}
+	s := Dial(ms, "rest_test")
+	s.DefType(SS{})
+	s.DefRes("test-ss", FieldResource{
+		Type:  "SS",
+		Allow: GET | POST | PATCH,
+		PatchFields:[]string{"S1"},
+	})
+	ctx := s.NewContext()
+	defer ctx.Close()
+	uri, err := ResIdParse("/test-ss")
+	if err != nil {
+		panic(err)
+	}
+	r, err := s.R(uri, ctx)
+	if err != nil {
+		panic(err)
+	}
+	for i := 0; i < 5; i++ {
+		data := SS{S1: fmt.Sprintf("Hello %d", i)}
+		_, err := r.Post(&data)
+		if err != nil {
+			panic(err)
+		}
+	}
+	_, err = r.Patch(M{"set":M{"S1":"Hello Patch"}})
+	if err != nil {
+		panic(err)
+	}
+	resp, err := r.Get()
+	if err != nil {
+		panic(err)
+	}
+	iter := resp.(Iter)
+	n := iter.Count()
+	fmt.Println(n)
+	for {
+		resp, ok := iter.Next()
+		if !ok {
+			break
+		}
+		ss := resp.(*SS)
+		fmt.Println(ss.S1)
+	}
+	var s1set []string
+	iter.Extract("S1", &s1set)
+	fmt.Println(len(s1set))
+	//Output:5
+	//Hello Patch
+	//Hello Patch
+	//Hello Patch
+	//Hello Patch
+	//Hello Patch
+	//1
+
+}

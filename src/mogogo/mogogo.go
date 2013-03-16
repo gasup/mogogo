@@ -509,7 +509,7 @@ type Resource interface {
 	Post(request interface{}) (response interface{}, err error)
 	Patch(request interface{}) (response interface{}, err error)
 }
-type BeforeHookFunc func(req *Req, ctx *Context) (goOn bool, response interface{}, err error) 
+type BeforeHookFunc func(req *Req, ctx *Context) (goOn bool, response interface{}, err error)
 type AfterHookFunc func(req *Req, ctx *Context, response interface{}, err error) (goOn bool, newResp interface{}, newErr error)
 type Session interface {
 	NewContext() *Context
@@ -955,7 +955,7 @@ type rest struct {
 	types   map[string]reflect.Type
 	queries map[string]*CustomResource
 	binds   map[string]map[string]*bind
-	hooks map[hookKey]interface{}
+	hooks   map[hookKey]interface{}
 }
 
 func (r *rest) NewContext() *Context {
@@ -975,16 +975,20 @@ func getCheckNil(b bson.M, key string) interface{} {
 	}
 	return ret
 }
+
 type hookType int
+
 const (
 	before hookType = iota
 	after
 )
+
 type hookKey struct {
 	ht hookType
-	m Method
-	r string
+	m  Method
+	r  string
 }
+
 func (r *rest) Before(method Method, res string, hook BeforeHookFunc) {
 	r.checkQuery(res)
 	r.hooks[hookKey{before, method, res}] = hook

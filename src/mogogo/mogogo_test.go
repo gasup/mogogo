@@ -598,11 +598,11 @@ func ExampleFieldResourceGet1() {
 	s.Before(POST, "test-ss", func(req *Req, ctx *Context) (goOn bool, resp interface{}, err error) {
 		fmt.Println("Before Post", req.Body.(*SS).S1)
 		return true, nil, nil
-	});
+	})
 	s.After(POST, "test-ss", func(req *Req, ctx *Context, resp interface{}, err error) (goOn bool, newResp interface{}, newErr error) {
 		fmt.Println("After Post", req.Body.(*SS).S1)
 		return true, nil, nil
-	});
+	})
 	ctx := s.NewContext()
 	defer ctx.Close()
 	uri, err := ResIdParse("/test-ss")

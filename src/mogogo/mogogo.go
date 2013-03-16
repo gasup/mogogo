@@ -664,20 +664,19 @@ func (si *selectorIter) Next() (result interface{}, ok bool) {
 
 const defaultSliceItems = 60
 const maxSkip = 5000
-const maxN = 1000
 
 func reverse(s []interface{}) {
 	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
 		s[i], s[j] = s[j], s[i]
 	}
 }
-func (si *selectorIter) timelineItemsPrev(next bson.ObjectId, n int) (ret []interface{}) {
+func (si *selectorIter) timelineItemsPrev(next bson.ObjectId, n int, all bool) (ret []interface{}) {
 	ret = make([]interface{}, 0)
 	if n <= 0 {
 		return
 	}
-	if si.limit > 0 && n > maxN {
-		n = maxN
+	if si.limit > 0 && n > si.limit {
+		n = si.limit
 	}
 	sel := si.copySel()
 	sortFields := make([]string, 1)
@@ -688,7 +687,12 @@ func (si *selectorIter) timelineItemsPrev(next bson.ObjectId, n int) (ret []inte
 		sortFields[0] = "-_id"
 		sel["_id"] = bson.M{"$lt": next}
 	}
-	iter := si.selQuery(sel).Sort(sortFields...).Limit(n).Iter()
+	var iter *mgo.Iter
+	if !all {
+		iter = si.selQuery(sel).Sort(sortFields...).Limit(n).Iter()
+	} else {
+		iter = si.selQuery(sel).Sort(sortFields...).Iter()
+	}
 	b := make(bson.M)
 	for iter.Next(b) {
 		s := reflect.New(si.typ).Interface()
@@ -701,13 +705,13 @@ func (si *selectorIter) timelineItemsPrev(next bson.ObjectId, n int) (ret []inte
 	reverse(ret)
 	return
 }
-func (si *selectorIter) timelineItemsNext(next bson.ObjectId, n int) (ret []interface{}) {
+func (si *selectorIter) timelineItemsNext(next bson.ObjectId, n int, all bool) (ret []interface{}) {
 	ret = make([]interface{}, 0)
 	if n <= 0 {
 		return
 	}
-	if si.limit > 0 && n > maxN {
-		n = maxN
+	if si.limit > 0 && n > si.limit {
+		n = si.limit
 	}
 	sel := si.copySel()
 	if next != "" {
@@ -717,7 +721,12 @@ func (si *selectorIter) timelineItemsNext(next bson.ObjectId, n int) (ret []inte
 			sel["_id"] = bson.M{"$gt": next}
 		}
 	}
-	iter := si.selQuery(sel).Sort(si.sortFields...).Limit(n).Iter()
+	var iter *mgo.Iter
+	if !all {
+		iter = si.selQuery(sel).Sort(si.sortFields...).Limit(n).Iter()
+	} else {
+		iter = si.selQuery(sel).Sort(si.sortFields...).Iter()
+	}
 	b := make(bson.M)
 	for iter.Next(b) {
 		s := reflect.New(si.typ).Interface()
@@ -743,6 +752,14 @@ func (si *selectorIter) timelineSlice() (slice *selectorSlice, err error) {
 	if err != nil {
 		return nil, err
 	}
+	all, err := parseParamBool(si.resId.Params, "all", false)
+	if err != nil {
+		return nil, err
+	}
+	if all && si.limit > 0 {
+		all = false
+		n = si.limit
+	}
 	noitems, err := parseParamBool(si.resId.Params, "noitems", false)
 	if err != nil {
 		return nil, err
@@ -753,11 +770,11 @@ func (si *selectorIter) timelineSlice() (slice *selectorSlice, err error) {
 	}
 	if !noitems {
 		if foundNext {
-			slice.items = si.timelineItemsNext(next, n)
+			slice.items = si.timelineItemsNext(next, n, all)
 		} else if foundPrev {
-			slice.items = si.timelineItemsPrev(prev, n)
+			slice.items = si.timelineItemsPrev(prev, n, all)
 		} else {
-			slice.items = si.timelineItemsNext("", n)
+			slice.items = si.timelineItemsNext("", n, all)
 		}
 	}
 	slice.self = si.timelineSelf()
@@ -811,7 +828,7 @@ func (si *selectorIter) count() (c int, more bool) {
 	}
 	return
 }
-func (si *selectorIter) sortedItems(c, n int) (ret []interface{}) {
+func (si *selectorIter) sortedItems(c, n int, all bool) (ret []interface{}) {
 	ret = make([]interface{}, 0)
 	if c < 0 {
 		n += c
@@ -820,17 +837,23 @@ func (si *selectorIter) sortedItems(c, n int) (ret []interface{}) {
 	if n <= 0 {
 		return
 	}
-	if si.limit > 0 && n > maxN {
-		n = maxN
+	if si.limit > 0 && n > si.limit {
+		n = si.limit
 	}
 	if c > maxSkip {
 		return
 	}
+	var qry *mgo.Query
 	var iter *mgo.Iter
 	if len(si.sortFields) > 0 {
-		iter = si.query().Sort(si.sortFields...).Skip(c).Limit(n).Iter()
+		qry = si.query().Sort(si.sortFields...).Skip(c)
 	} else {
-		iter = si.query().Skip(c).Limit(n).Iter()
+		qry = si.query().Skip(c)
+	}
+	if !all {
+		iter = qry.Limit(n).Iter()
+	} else {
+		iter = qry.Iter()
 	}
 	b := make(bson.M)
 	for iter.Next(b) {
@@ -853,6 +876,14 @@ func (si *selectorIter) sortedSlice() (slice *selectorSlice, err error) {
 	if err != nil {
 		return nil, err
 	}
+	all, err := parseParamBool(si.resId.Params, "all", false)
+	if err != nil {
+		return nil, err
+	}
+	if all && si.limit > 0 {
+		all = false
+		n = si.limit
+	}
 	noitems, err := parseParamBool(si.resId.Params, "noitems", false)
 	if err != nil {
 		return nil, err
@@ -862,7 +893,7 @@ func (si *selectorIter) sortedSlice() (slice *selectorSlice, err error) {
 		slice.count, slice.more = si.count()
 	}
 	if !noitems {
-		slice.items = si.sortedItems(c, n)
+		slice.items = si.sortedItems(c, n, all)
 	}
 	slice.self = si.sortedSelf()
 	if !slice.HasItems() || len(slice.items) != 0 {

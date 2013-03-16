@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 )
+
 type M map[string]interface{}
 
 type ErrorCode uint
@@ -397,15 +398,15 @@ func (m Method) String() string {
 }
 
 type FieldResource struct {
-	Type       string
-	Allow      Method
-	Fields     []string
-	ContextRef map[string]string
-	SortFields []string
-	Unique     bool
-	Count      bool
-	Limit      int
-	Pull       bool
+	Type        string
+	Allow       Method
+	Fields      []string
+	ContextRef  map[string]string
+	SortFields  []string
+	Unique      bool
+	Count       bool
+	Limit       int
+	Pull        bool
 	PatchFields []string
 }
 
@@ -478,8 +479,8 @@ func (ctx *Context) coll(typ string) *mgo.Collection {
 
 type Req struct {
 	*ResId
-	Method  Method
-	Body    interface{}
+	Method Method
+	Body   interface{}
 }
 type Slice interface {
 	Self() *ResId
@@ -1964,7 +1965,7 @@ func (h *fqHandler) toMgoUpdaterAddOp(m M, ret map[string]interface{}) {
 }
 func (h *fqHandler) toMgoUpdater(updater M) (ret map[string]interface{}) {
 	ret = make(map[string]interface{})
-	for k, v:= range updater {
+	for k, v := range updater {
 		m, ok := v.(M)
 		if !ok {
 			panic(fmt.Sprintf("want type %v, got '%v'", reflect.TypeOf(m), reflect.TypeOf(v)))

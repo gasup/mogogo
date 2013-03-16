@@ -1066,16 +1066,16 @@ func ExampleToMgoUpdater() {
 	session.DefType(S{})
 	session.DefType(SS{})
 	rest := session.(*rest)
-	fq := FieldResource{Type: "S", PatchFields:[]string{"S1","ST1","A1","A2","I1"}}
+	fq := FieldResource{Type: "S", PatchFields: []string{"S1", "ST1", "A1", "A2", "I1"}}
 	h := newFQHandler(rest, &fq)
 	s, _ := rest.newWithId("SS", "513063ef69ca944b1000000a")
 	s1 := s.(*SS)
 	m := M{
 		"set": M{
-			"S1": "Hello",
+			"S1":  "Hello",
 			"ST1": *s1,
 		},
-		"add": M {
+		"add": M{
 			"A1": "Hello",
 			"A2": *s1,
 			"I1": 10,
@@ -1085,7 +1085,7 @@ func ExampleToMgoUpdater() {
 	set := sel["$set"].(map[string]interface{})
 	inc := sel["$inc"].(map[string]interface{})
 	addToSet := sel["$addToSet"].(map[string]interface{})
-	fmt.Println(set["s1"],set["st1"])
+	fmt.Println(set["s1"], set["st1"])
 	fmt.Println(inc["i1"])
 	fmt.Println(addToSet["a1"], addToSet["a2"])
 	//Output:Hello ObjectIdHex("513063ef69ca944b1000000a")
@@ -1105,9 +1105,9 @@ func ExampleFieldResourcePatch1() {
 	s := Dial(ms, "rest_test")
 	s.DefType(SS{})
 	s.DefRes("test-ss", FieldResource{
-		Type:  "SS",
-		Allow: GET | POST | PATCH,
-		PatchFields:[]string{"S1"},
+		Type:        "SS",
+		Allow:       GET | POST | PATCH,
+		PatchFields: []string{"S1"},
 	})
 	ctx := s.NewContext()
 	defer ctx.Close()
@@ -1126,7 +1126,7 @@ func ExampleFieldResourcePatch1() {
 			panic(err)
 		}
 	}
-	_, err = r.Patch(M{"set":M{"S1":"Hello Patch"}})
+	_, err = r.Patch(M{"set": M{"S1": "Hello Patch"}})
 	if err != nil {
 		panic(err)
 	}

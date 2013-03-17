@@ -1189,3 +1189,67 @@ func ExampleFieldResourcePatch1() {
 	//Hello Patch
 	//1
 }
+func ExampleFieldResourceDelete2() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	err = ms.DB("rest_test").C("ss").DropCollection()
+	if err != nil {
+		panic(err)
+	}
+	s := Dial(ms, "rest_test")
+	s.DefType(SS{})
+	s.DefRes("test-ss", FieldResource{
+		Type:             "SS",
+		Allow:            GET | POST | DELETE,
+		UpdateWhenDelete: M{"S1": "Deleted"},
+	})
+	ctx := s.NewContext()
+	defer ctx.Close()
+	uri, err := ResIdParse("/test-ss")
+	if err != nil {
+		panic(err)
+	}
+	r, err := s.R(uri, ctx)
+	if err != nil {
+		panic(err)
+	}
+	for i := 0; i < 5; i++ {
+		data := SS{S1: fmt.Sprintf("Hello %d", i)}
+		_, err := r.Post(&data)
+		if err != nil {
+			panic(err)
+		}
+	}
+	_, err = r.Delete()
+	if err != nil {
+		panic(err)
+	}
+	resp, err := r.Get()
+	if err != nil {
+		panic(err)
+	}
+	iter := resp.(Iter)
+	n := iter.Count()
+	fmt.Println(n)
+	for {
+		resp, ok := iter.Next()
+		if !ok {
+			break
+		}
+		ss := resp.(*SS)
+		fmt.Println(ss.S1)
+	}
+	var s1set []string
+	iter.Extract("S1", &s1set)
+	fmt.Println(len(s1set))
+	//Output:5
+	//Deleted
+	//Deleted
+	//Deleted
+	//Deleted
+	//Deleted
+	//1
+}

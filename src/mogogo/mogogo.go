@@ -399,17 +399,17 @@ func (m Method) String() string {
 }
 
 type FieldResource struct {
-	Type           string
-	Allow          Method
-	Fields         []string
-	ContextRef     map[string]string
-	SortFields     []string
-	Unique         bool
-	Count          bool
-	Limit          int
-	Pull           bool
-	PatchFields    []string
-	UpdateOnDelete M
+	Type             string
+	Allow            Method
+	Fields           []string
+	ContextRef       map[string]string
+	SortFields       []string
+	Unique           bool
+	Count            bool
+	Limit            int
+	Pull             bool
+	PatchFields      []string
+	UpdateWhenDelete M
 }
 
 type SelectorResource struct {
@@ -1967,11 +1967,25 @@ func (h *fqHandler) Delete(req *Req, ctx *Context) (result interface{}, err erro
 	if err != nil {
 		return nil, err
 	}
-	_, err = h.coll(ctx).RemoveAll(q)
-	if err != nil {
-		panic(&Error{Code: InternalServerError, Err: err})
+	if h.fq.UpdateWhenDelete == nil {
+		_, err = h.coll(ctx).RemoveAll(q)
+		if err != nil {
+			panic(&Error{Code: InternalServerError, Err: err})
+		}
+	} else {
+		updater := make(map[string]interface{})
+		h.toMgoUpdaterSetOp(h.fq.UpdateWhenDelete, updater, false)
+		_, err = h.coll(ctx).UpdateAll(q, updater)
+		if err != nil {
+			lasterr := err.(*mgo.LastError)
+			if lasterr.Code == 11000 {
+				return nil, &Error{Code: Conflict}
+			} else {
+				return nil, &Error{Code: InternalServerError, Err: err}
+			}
+		}
 	}
-	return nil, err
+	return nil, nil
 }
 func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error) {
 	if h.fq.Allow&POST == 0 {
@@ -2002,10 +2016,10 @@ func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error)
 	}
 	return body, nil
 }
-func (h *fqHandler) toMgoUpdaterSetOp(m M, ret map[string]interface{}) {
+func (h *fqHandler) toMgoUpdaterSetOp(m M, ret map[string]interface{}, checkPatchFields bool) {
 	t := h.r.types[h.fq.Type]
 	for k, v := range m {
-		if _, ok := indexOf(h.fq.PatchFields, k); !ok {
+		if _, ok := indexOf(h.fq.PatchFields, k); checkPatchFields && !ok {
 			panic(fmt.Sprintf("field '%s' not allow", k))
 		}
 		fs, ok := t.FieldByName(k)
@@ -2046,7 +2060,7 @@ func (h *fqHandler) toMgoUpdater(updater M) (ret map[string]interface{}) {
 		}
 		switch k {
 		case "Set":
-			h.toMgoUpdaterSetOp(m, ret)
+			h.toMgoUpdaterSetOp(m, ret, true)
 		case "Add":
 			h.toMgoUpdaterAddOp(m, ret)
 		default:

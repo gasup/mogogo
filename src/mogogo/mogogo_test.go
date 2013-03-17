@@ -846,6 +846,7 @@ func ExampleToMgoSelector() {
 		"T1": tm1,
 		//db.places.find( { loc: { $within: { $centerSphere: [ [ -74, 40.74 ] , 100 / 6378.137 ] } } } )
 		"G1": M{"$within": M{"$centerSphere": A{Geo{La: 1.2, Lo: 3.4}, 100 / 6378.137}}},
+		"$or":A{M{"S1":"Bye"}},
 	}
 	sel := h.toMgoSelector(m)
 	fmt.Println(sel["s1"])
@@ -854,12 +855,14 @@ func ExampleToMgoSelector() {
 	fmt.Println(sel["a2"])
 	fmt.Println(sel["t1"])
 	fmt.Println(sel["g1"])
+	fmt.Println(sel["$or"])
 	//Output:Hello
 	//ObjectIdHex("513063ef69ca944b1000000a")
 	//[a b c]
 	//map[$in:[ObjectIdHex("513063ef69ca944b1000000a") ObjectIdHex("513063ef69ca944b1000000a") ObjectIdHex("513063ef69ca944b1000000a")]]
 	//2013-03-01 08:16:47 +0000 UTC
 	//map[$within:map[$centerSphere:[[3.4 1.2] 0.01567855942887398]]]
+	//[map[s1:Bye]]
 }
 func ExampleSelectorResource() {
 	ms, err := mgo.Dial("localhost")
@@ -1186,5 +1189,4 @@ func ExampleFieldResourcePatch1() {
 	//Hello Patch
 	//Hello Patch
 	//1
-
 }

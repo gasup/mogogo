@@ -2138,14 +2138,34 @@ type sqHandler struct {
 func newSQHandler(r *rest, sq *SelectorResource) *sqHandler {
 	return &sqHandler{r, sq}
 }
-func (h *sqHandler) toMgoSelMap(elem interface{}) (selelem interface{}) {
-	ret := make(map[string]interface{})
-	v := reflect.ValueOf(elem)
-	for _, kv := range v.MapKeys() {
-		vv := v.MapIndex(kv)
-		ret[kv.String()] = h.toMgoSelElem(vv.Interface())
+func (h *sqHandler) toMgoSelMap(elem interface{}) map[string]interface{} {
+	typ := h.r.types[h.sq.Type]
+	selelem := make(map[string]interface{})
+	ev := reflect.ValueOf(elem)
+	for _, kv := range ev.MapKeys() {
+		vv := ev.MapIndex(kv)
+		k := kv.Interface().(string)
+		v := vv.Interface()
+		if k[0] == '$' {
+			selelem[k] = h.toMgoSelElem(v)
+		} else {
+			switch k {
+			case "Id":
+				selelem["_id"] = h.toMgoSelElem(v)
+			case "CT":
+				selelem["ct"] = h.toMgoSelElem(v)
+			case "MT":
+				selelem["mt"] = h.toMgoSelElem(v)
+			default:
+				_, ok := typ.FieldByName(k)
+				if !ok {
+					panic(fmt.Sprintf("field '%s' not found in %v", k, typ))
+				}
+				selelem[strings.ToLower(k)] = h.toMgoSelElem(v)
+			}
+		}
 	}
-	return ret
+	return selelem
 }
 func (h *sqHandler) toMgoSelSlice(elem interface{}) (selelem interface{}) {
 	v := reflect.ValueOf(elem)
@@ -2175,25 +2195,7 @@ func (h *sqHandler) toMgoSelElem(elem interface{}) (selelem interface{}) {
 	return
 }
 func (h *sqHandler) toMgoSelector(sel M) (mgosel map[string]interface{}) {
-	typ := h.r.types[h.sq.Type]
-	mgosel = make(map[string]interface{})
-	for k, v := range sel {
-		switch k {
-		case "Id":
-			mgosel["_id"] = h.toMgoSelElem(v)
-		case "CT":
-			mgosel["ct"] = h.toMgoSelElem(v)
-		case "MT":
-			mgosel["mt"] = h.toMgoSelElem(v)
-		default:
-			_, ok := typ.FieldByName(k)
-			if !ok {
-				panic(fmt.Sprintf("field '%s' not found in %v", k, typ))
-			}
-			mgosel[strings.ToLower(k)] = h.toMgoSelElem(v)
-		}
-	}
-	return
+	return h.toMgoSelMap(sel)
 }
 func (h *sqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) {
 	sel, err := h.sq.SelectorFunc(req, ctx)

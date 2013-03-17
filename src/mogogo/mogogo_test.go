@@ -823,7 +823,6 @@ func ExampleBind() {
 	//2
 }
 
-
 func ExampleToMgoSelector() {
 	ms, err := mgo.Dial("localhost")
 	if err != nil {
@@ -845,8 +844,8 @@ func ExampleToMgoSelector() {
 		"A2": M{"$in": []*S{s1, s1, s1}},
 		"T1": tm1,
 		//db.places.find( { loc: { $within: { $centerSphere: [ [ -74, 40.74 ] , 100 / 6378.137 ] } } } )
-		"G1": M{"$within": M{"$centerSphere": A{Geo{La: 1.2, Lo: 3.4}, 100 / 6378.137}}},
-		"$or":A{M{"S1":"Bye"}},
+		"G1":  M{"$within": M{"$centerSphere": A{Geo{La: 1.2, Lo: 3.4}, 100 / 6378.137}}},
+		"$or": A{M{"S1": "Bye"}},
 	}
 	sel := h.toMgoSelector(m)
 	fmt.Println(sel["s1"])

@@ -399,16 +399,16 @@ func (m Method) String() string {
 }
 
 type FieldResource struct {
-	Type        string
-	Allow       Method
-	Fields      []string
-	ContextRef  map[string]string
-	SortFields  []string
-	Unique      bool
-	Count       bool
-	Limit       int
-	Pull        bool
-	PatchFields []string
+	Type           string
+	Allow          Method
+	Fields         []string
+	ContextRef     map[string]string
+	SortFields     []string
+	Unique         bool
+	Count          bool
+	Limit          int
+	Pull           bool
+	PatchFields    []string
 	UpdateOnDelete M
 }
 

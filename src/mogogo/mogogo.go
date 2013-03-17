@@ -14,6 +14,7 @@ import (
 )
 
 type M map[string]interface{}
+type A []interface{}
 
 type ErrorCode uint
 
@@ -408,11 +409,12 @@ type FieldResource struct {
 	Limit       int
 	Pull        bool
 	PatchFields []string
+	UpdateOnDelete M
 }
 
 type SelectorResource struct {
 	Type             string
-	SelectorFunc     func(req *Req, ctx *Context) (selector map[string]interface{}, err error)
+	SelectorFunc     func(req *Req, ctx *Context) (selector M, err error)
 	SortFields       []string
 	PathSegmentTypes []string
 	Count            bool
@@ -452,6 +454,9 @@ type Context struct {
 	newval bool
 }
 
+func (ctx *Context) S() Session {
+	return ctx.r
+}
 func (ctx *Context) IsSys() bool {
 	return ctx.sys
 }
@@ -466,7 +471,12 @@ func (ctx *Context) Set(key string, val interface{}) {
 	ctx.newval = true
 	ctx.values[key] = val
 }
-
+func (ctx *Context) reopen() {
+	if ctx.s != nil {
+		panic("context has been opened")
+	}
+	ctx.s = ctx.r.s.Copy()
+}
 func (ctx *Context) Close() {
 	ctx.s.Close()
 	ctx.s = nil
@@ -505,6 +515,7 @@ type Iter interface {
 
 type Resource interface {
 	NewRequest() interface{}
+	RequestType() reflect.Type
 	Get() (result interface{}, err error)
 	Put(request interface{}) (response interface{}, err error)
 	Delete() (response interface{}, err error)
@@ -2163,7 +2174,7 @@ func (h *sqHandler) toMgoSelElem(elem interface{}) (selelem interface{}) {
 	}
 	return
 }
-func (h *sqHandler) toMgoSelector(sel map[string]interface{}) (mgosel map[string]interface{}) {
+func (h *sqHandler) toMgoSelector(sel M) (mgosel map[string]interface{}) {
 	typ := h.r.types[h.sq.Type]
 	mgosel = make(map[string]interface{})
 	for k, v := range sel {
@@ -2203,7 +2214,7 @@ func (h *sqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) 
 		pull:       false,
 		resId:      req.ResId,
 		ctx:        ctx,
-		sel:        sel,
+		sel:        bson.M(sel),
 	}, err
 	return
 }
@@ -2475,6 +2486,9 @@ func (res *resource) Patch(request interface{}) (response interface{}, err error
 }
 func (res *resource) NewRequest() interface{} {
 	return res.r.newStruct(res.cq.RequestType)
+}
+func (res *resource) RequestType() reflect.Type {
+	return res.r.types[res.cq.RequestType]
 }
 func (r *rest) queryRes(cq *CustomResource, resId *ResId, ctx *Context) (res Resource, err error) {
 	return &resource{cq, resId, ctx, r}, nil

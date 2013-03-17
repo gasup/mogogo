@@ -823,8 +823,6 @@ func ExampleBind() {
 	//2
 }
 
-type array []interface{}
-type m map[string]interface{}
 
 func ExampleToMgoSelector() {
 	ms, err := mgo.Dial("localhost")
@@ -840,14 +838,14 @@ func ExampleToMgoSelector() {
 	tm1, _ := time.Parse(time.RFC3339, "2013-03-01T08:16:47Z")
 	s, _ := rest.newWithId("S", "513063ef69ca944b1000000a")
 	s1 := s.(*S)
-	m := map[string]interface{}{
+	m := M{
 		"S1": "Hello",
 		"Id": s1,
 		"A1": []interface{}{"a", "b", "c"},
-		"A2": m{"$in": []*S{s1, s1, s1}},
+		"A2": M{"$in": []*S{s1, s1, s1}},
 		"T1": tm1,
 		//db.places.find( { loc: { $within: { $centerSphere: [ [ -74, 40.74 ] , 100 / 6378.137 ] } } } )
-		"G1": m{"$within": m{"$centerSphere": array{Geo{La: 1.2, Lo: 3.4}, 100 / 6378.137}}},
+		"G1": M{"$within": M{"$centerSphere": A{Geo{La: 1.2, Lo: 3.4}, 100 / 6378.137}}},
 	}
 	sel := h.toMgoSelector(m)
 	fmt.Println(sel["s1"])
@@ -881,9 +879,9 @@ func ExampleSelectorResource() {
 	})
 	s.DefRes("test-ss-sel", SelectorResource{
 		Type: "SS",
-		SelectorFunc: func(req *Req, ctx *Context) (map[string]interface{}, error) {
-			return map[string]interface{}{
-				"S1": m{"$gt": "Hello 2"},
+		SelectorFunc: func(req *Req, ctx *Context) (M, error) {
+			return M{
+				"S1": M{"$gt": "Hello 2"},
 			}, nil
 		},
 		SortFields: []string{"S1"},

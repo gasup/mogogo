@@ -130,3 +130,14 @@ func accMapMap(m map[string]interface{}, key0, key1 string, val interface{}) {
 	}
 	m1[key1] = val
 }
+func accMM(m M, key0, key1 string, val interface{}) {
+	mv, ok := m[key0]
+	var m1 M
+	if ok {
+		m1 = mv.(M)
+	} else {
+		m1 = make(M)
+		m[key0] = m1
+	}
+	m1[key1] = val
+}

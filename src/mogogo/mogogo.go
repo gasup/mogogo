@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type M map[string]interface{}
@@ -245,6 +246,7 @@ type Base struct {
 	self   interface{}
 	r      *rest
 	loaded bool
+	isNew  bool
 }
 
 var baseType = reflect.TypeOf(Base{})
@@ -336,6 +338,9 @@ func (b *Base) AllRel() map[string]*ResId {
 		ret[k] = b.Rel(k)
 	}
 	return ret
+}
+func (b *Base) IsNew() bool {
+	return b.isNew
 }
 
 type Geo struct {
@@ -512,10 +517,15 @@ type Iter interface {
 	Slice() (slice Slice, err error)
 	Extract(field string, result interface{})
 }
-
-type Resource interface {
+type ResourceMeta interface {
 	NewRequest() interface{}
 	RequestType() reflect.Type
+	ResponseType() reflect.Type
+	MapToRequest(m map[string]interface{}, base *url.URL) (interface{}, error)
+	MapToUpdater(m map[string]interface{}, base *url.URL) (M, error)
+	ResponseToMap(resp interface{}, base *url.URL) map[string]interface{}
+}
+type Resource interface {
 	Get() (result interface{}, err error)
 	Put(request interface{}) (response interface{}, err error)
 	Delete() (response interface{}, err error)
@@ -1516,8 +1526,13 @@ func (r *rest) mapElemToValue(v reflect.Value, t reflect.Type, key string, baseU
 		ret, err = r.mapElemToSlice(v, t, key, baseURL)
 	case reflect.Struct:
 		ret, err = r.mapElemToStruct(v, t, key, baseURL)
+	case reflect.Ptr:
+		ret, err = r.mapElemToValue(v, t.Elem(), key, baseURL)
+		if err == nil {
+			ret = ret.Addr()
+		}
 	default:
-		msg := fmt.Sprintf("field '%s' type '%s' not support'", key, t.Name())
+		msg := fmt.Sprintf("field '%s' type '%v' not support'", key, t)
 		return ret, &Error{Code: BadRequest, Msg: msg}
 	}
 	return ret, err
@@ -1624,6 +1639,76 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}, baseURL *url
 		return &Error{Code: BadRequest, Fields: fieldsErr}
 	}
 	return nil
+}
+func (r *rest) mapToUpdaterSetOp(m map[string]interface{}, ret M, base *url.URL, t reflect.Type) error {
+	for k, v := range m {
+		fs, ok := t.FieldByNameFunc(func(name string) bool {
+			return unicode.IsUpper(rune(name[0])) && strings.ToLower(name) == k
+		})
+		if !ok {
+			return &Error{Code: BadRequest, Msg: fmt.Sprintf("field '%s' not in '%v'", k, t)}
+		}
+		retv, err := r.mapElemToValue(reflect.ValueOf(v), fs.Type, k, base)
+		if err != nil {
+			return err
+		}
+		accMM(ret, "Set", fs.Name, retv.Interface())
+	}
+	return nil
+}
+func (r *rest) mapToUpdaterAddOp(m map[string]interface{}, ret M, base *url.URL, t reflect.Type) error {
+	for k, v := range m {
+		fs, ok := t.FieldByNameFunc(func(name string) bool {
+			return unicode.IsUpper(rune(name[0])) && strings.ToLower(name) == k
+		})
+		if !ok {
+			return &Error{Code: BadRequest, Msg: fmt.Sprintf("field '%s' not in '%v'", k, t)}
+		}
+		ft := fs.Type
+		if ft.Kind() == reflect.Ptr {
+			ft = ft.Elem()
+		}
+		switch ft.Kind() {
+		case reflect.Slice:
+			retv, err := r.mapElemToValue(reflect.ValueOf(v), ft.Elem(), k, base)
+			if err != nil {
+				return err
+			}
+			accMM(ret, "Add", fs.Name, retv.Interface())
+		default:
+			retv, err := r.mapElemToValue(reflect.ValueOf(v), fs.Type, k, base)
+			if err != nil {
+				return err
+			}
+			accMM(ret, "Add", fs.Name, retv.Interface())
+		}
+	}
+	return nil
+}
+func (r *rest) mapToUpdater(mupdater map[string]interface{}, baseURL *url.URL, t reflect.Type) (M, error) {
+	ret := make(map[string]interface{})
+	for k, v := range mupdater {
+		m, ok := v.(map[string]interface{})
+		if !ok {
+			msg := fmt.Sprintf("want type %v, got '%v'", reflect.TypeOf(m), reflect.TypeOf(v))
+			return nil, &Error{Code: BadRequest, Msg: msg}
+		}
+		switch k {
+		case "set":
+			err := r.mapToUpdaterSetOp(m, ret, baseURL, t)
+			if err != nil {
+				return nil, err
+			}
+		case "add":
+			err := r.mapToUpdaterAddOp(m, ret, baseURL, t)
+			if err != nil {
+				return nil, err
+			}
+		default:
+			return nil, &Error{Code: BadRequest, Msg: fmt.Sprintf("unknown updater op '%s'", k)}
+		}
+	}
+	return M(ret), nil
 }
 func (r *rest) checkSegmentsType(typ string, segmentRef []interface{}, res string) {
 	segsType := r.queries[res].PathSegmentTypes
@@ -1921,6 +2006,7 @@ func (h *fqHandler) Put(req *Req, ctx *Context) (result interface{}, err error) 
 		base.mt = bson.Now().UTC()
 		base.ct = base.mt
 		base.loaded = true
+		base.isNew = true
 		base.r = h.r
 		base.self = body
 		base.t = h.fq.Type
@@ -2001,6 +2087,7 @@ func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error)
 	base.mt = bson.Now().UTC()
 	base.ct = base.mt
 	base.loaded = true
+	base.isNew = true
 	base.r = h.r
 	base.self = body
 	base.t = h.fq.Type
@@ -2506,6 +2593,24 @@ func (res *resource) NewRequest() interface{} {
 func (res *resource) RequestType() reflect.Type {
 	return res.r.types[res.cq.RequestType]
 }
+func (res *resource) ResponseType() reflect.Type {
+	return res.r.types[res.cq.ResponseType]
+}
+func (res *resource) MapToRequest(m map[string]interface{}, base *url.URL) (interface{}, error) {
+	ret := res.NewRequest()
+	err := res.r.mapToStruct(m, ret, base)
+	if err != nil {
+		return nil, err
+	}
+	return ret, nil
+}
+
+func (res *resource) MapToUpdater(m map[string]interface{}, base *url.URL) (M, error) {
+	return res.r.mapToUpdater(m, base, res.RequestType())
+}
+func (res *resource) ResponseToMap(resp interface{}, base *url.URL) map[string]interface{} {
+	return res.r.structToMap(resp, base)
+}
 func (r *rest) queryRes(cq *CustomResource, resId *ResId, ctx *Context) (res Resource, err error) {
 	return &resource{cq, resId, ctx, r}, nil
 }
@@ -2518,6 +2623,6 @@ func (r *rest) R(resId *ResId, ctx *Context) (res Resource, err error) {
 		}
 		return r.queryRes(qry, resId, ctx)
 	}
-	msg := fmt.Sprintf("'%s' not found", resId.String())
+	msg := fmt.Sprintf("'%s' no resource named '%s'", resId.String())
 	return nil, &Error{Code: NotFound, Msg: msg}
 }

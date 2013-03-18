@@ -1125,6 +1125,38 @@ func ExampleToMgoUpdater() {
 	//10
 	//Hello ObjectIdHex("513063ef69ca944b1000000a")
 }
+func ExampleMapToUpdater() {
+	ms, err := mgo.Dial("localhost")
+	if err != nil {
+		panic(err)
+	}
+	defer ms.Close()
+	session := Dial(ms, "rest_test")
+	session.DefType(S{})
+	session.DefType(SS{})
+	rest := session.(*rest)
+	m := map[string]interface{}{
+		"set": map[string]interface{}{
+			"s1":  "Hello",
+			"st1": map[string]interface{}{"id": "513063ef69ca944b1000000a"},
+		},
+		"add": map[string]interface{}{
+			"a1": "Hello",
+			"a2": map[string]interface{}{"id": "513063ef69ca944b1000000a"},
+			"i1": 10,
+		},
+	}
+	sel, err := rest.mapToUpdater(m, baseURL1, reflect.TypeOf(S{}))
+	if err != nil {
+		panic(err)
+	}
+	set := sel["Set"].(M)
+	inc := sel["Add"].(M)
+	fmt.Println(set["S1"], set["ST1"].(SS).id)
+	fmt.Println(inc["I1"], inc["A1"], inc["A2"].(SS).id)
+	//Output:Hello ObjectIdHex("513063ef69ca944b1000000a")
+	//10 Hello ObjectIdHex("513063ef69ca944b1000000a")
+}
 func ExampleFieldResourcePatch1() {
 	ms, err := mgo.Dial("localhost")
 	if err != nil {

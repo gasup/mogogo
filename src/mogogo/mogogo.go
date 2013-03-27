@@ -20,13 +20,15 @@ type A []interface{}
 type ErrorCode uint
 
 const (
-	BadRequest          = 400
-	Forbidden           = 403
-	Unauthorized        = 401
-	NotFound            = 404
-	MethodNotAllowed    = 405
-	Conflict            = 409
-	InternalServerError = 500
+	BadRequest           = 400
+	Forbidden            = 403
+	Unauthorized         = 401
+	NotFound             = 404
+	MethodNotAllowed     = 405
+	Conflict             = 409
+	UnsupportedMediaType = 415
+	Teapot               = 418
+	InternalServerError  = 500
 )
 
 func (es ErrorCode) String() string {
@@ -44,6 +46,10 @@ func (es ErrorCode) String() string {
 		ret = "method not allowed"
 	case Conflict:
 		ret = "conflict"
+	case UnsupportedMediaType:
+		ret = "unsupported media type"
+	case Teapot:
+		ret = "I'm a teapot"
 	case InternalServerError:
 		ret = "internal server error"
 	default:
@@ -124,6 +130,9 @@ type ResId struct {
 	Params Params
 }
 
+func (resId *ResId) Name() string {
+	return resId.path[0]
+}
 func (resId *ResId) Copy() *ResId {
 	path := make([]string, len(resId.path))
 	copy(path, resId.path)
@@ -189,19 +198,22 @@ func (resId *ResId) String() string {
 func ResIdParse(s string) (resId *ResId, err error) {
 	url, err := url.Parse(s)
 	if err != nil {
-		return nil, err
+		return nil, &Error{Code: BadRequest, Msg: "parse url error", Err: err}
 	}
-	if url.Path[0] != '/' {
-		return nil, fmt.Errorf("must absolute url. %s", s)
+	return ResIdFromURL(url)
+}
+func ResIdFromURL(URL *url.URL) (resId *ResId, err error) {
+	if URL.Path[0] != '/' {
+		return nil, &Error{Code: BadRequest, Msg: fmt.Sprintf("must absolute url. %v", URL)}
 	}
+	err = nil
 	resId = new(ResId)
-	resId.path = strings.Split(url.Path[1:], "/")
+	resId.path = strings.Split(URL.Path[1:], "/")
 	resId.Params = make(map[string]string)
-	for k, v := range url.Query() {
+	for k, v := range URL.Query() {
 		resId.Params[k] = v[0]
 	}
 	return
-
 }
 func NewResId(name string, segments ...interface{}) *ResId {
 	ret := new(ResId)
@@ -607,7 +619,7 @@ func (ss *selectorSlice) More() bool {
 	return ss.more
 }
 func (ss *selectorSlice) HasItems() bool {
-	return ss.items == nil
+	return ss.items != nil
 }
 func (ss *selectorSlice) Items() []interface{} {
 	if ss.items == nil {
@@ -810,7 +822,7 @@ func (si *selectorIter) timelineSlice() (slice *selectorSlice, err error) {
 		}
 	}
 	slice.self = si.timelineSelf()
-	if slice.HasItems() || len(slice.items) != 0 {
+	if slice.HasItems() && len(slice.items) != 0 {
 		slice.prev = si.timelinePrev(slice)
 		slice.next = si.timelineNext(slice)
 	}
@@ -1165,7 +1177,7 @@ func (r *rest) structToMapElem(v reflect.Value, t reflect.Type, baseURL *url.URL
 		ret = url.String()
 	} else if t == timeType {
 		tm := v.Interface().(time.Time)
-		ret = tm.Format(time.RFC3339)
+		ret = tm.UTC().Format(time.RFC3339)
 	} else if t == geoType {
 		geo := v.Interface().(Geo)
 		ret = map[string]interface{}{"lon": geo.Lo, "lat": geo.La}
@@ -1206,15 +1218,15 @@ func (r *rest) structToMap(s interface{}, baseURL *url.URL) map[string]interface
 		if base.id != "" {
 			ret["id"] = base.id.Hex()
 			ret["self"] = base.Self().URLWithBase(baseURL).String()
-			ret["type"] = base.t
+			ret["type"] = strings.ToLower(base.t)
 			if base.mt.IsZero() {
 				panic("modifiy time not set")
 			}
 			if base.ct.IsZero() {
 				panic("create time not set")
 			}
-			ret["mt"] = base.mt.Format(time.RFC3339)
-			ret["ct"] = base.ct.Format(time.RFC3339)
+			ret["mt"] = base.mt.UTC().Format(time.RFC3339)
+			ret["ct"] = base.ct.UTC().Format(time.RFC3339)
 		}
 	}
 	for i := 0; i < st.NumField(); i++ {
@@ -2443,7 +2455,7 @@ func (r *rest) newStruct(typ string) interface{} {
 func (r *rest) newWithId(typ string, hex string) (val interface{}, err error) {
 	id, err := parseObjectId(hex)
 	if err != nil {
-		return nil, fmt.Errorf("parse object id error: %v", err)
+		return nil, &Error{Code: BadRequest, Msg: "parse object id error", Err: err}
 	}
 	return r.newWithObjectId(r.types[typ], id)
 }
@@ -2623,6 +2635,6 @@ func (r *rest) R(resId *ResId, ctx *Context) (res Resource, err error) {
 		}
 		return r.queryRes(qry, resId, ctx)
 	}
-	msg := fmt.Sprintf("'%s' no resource named '%s'", resId.String())
+	msg := fmt.Sprintf("no resource named '%s'", resId.String())
 	return nil, &Error{Code: NotFound, Msg: msg}
 }

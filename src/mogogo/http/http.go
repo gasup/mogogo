@@ -10,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"compress/gzip"
+	"compress/flate"
+	"io"
 )
 
 func getBase(s interface{}) (base *mogogo.Base, ok bool) {
@@ -184,22 +187,45 @@ func (h *HTTPHandler) request(req *http.Request, ctx *mogogo.Context) (status in
 	}
 	return h.responseBody(req, r, res)
 }
-func (h *HTTPHandler) responseJSON(w http.ResponseWriter, status int, m map[string]interface{}) {
+func (h *HTTPHandler) compress(w http.ResponseWriter, req *http.Request) (cw io.WriteCloser, compressed bool) {
+	ae := req.Header.Get("Accept-Encoding")
+	if strings.Contains(ae, "gzip") {
+		w.Header().Set("Content-Encoding", "gzip")
+		cw, compressed = gzip.NewWriter(w), true
+	} else if strings.Contains(ae, "deflate") {
+		w.Header().Set("Content-Encoding", "deflate")
+		cw, _ = flate.NewWriter(w, flate.DefaultCompression)
+		compressed = true
+	} else {
+		cw, compressed = nil, false
+	}
+	return
+}
+func (h *HTTPHandler) responseJSON(w http.ResponseWriter, req *http.Request, status int, m map[string]interface{}) {
 	if m == nil {
 		w.WriteHeader(status)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	cw, c := h.compress(w, req)
+	if c {
+		defer cw.Close()
+	}
 	w.WriteHeader(status)
-	enc := json.NewEncoder(w)
+	var enc *json.Encoder
+	if c {
+		enc = json.NewEncoder(cw)
+	} else {
+		enc = json.NewEncoder(w)
+	}
 	err := enc.Encode(m)
 	if err != nil {
 		log.Println(err)
 	}
 }
-func (h *HTTPHandler) responseError(w http.ResponseWriter, err interface{}) {
+func (h *HTTPHandler) responseError(w http.ResponseWriter, req *http.Request, err interface{}) {
 	s, m := h.errToMap(err)
-	h.responseJSON(w, s, m)
+	h.responseJSON(w, req, s, m)
 }
 const (
 	cookieKey = "MOGOGO_ID"
@@ -271,14 +297,12 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	} else {
 		req.URL.Scheme = "https"
 	}
-	/*
 	defer func() {
 		err := recover()
 		if err != nil {
-			h.responseError(w, err)
+			h.responseError(w, req, err)
 		}
 	}()
-	*/
 	ctx := h.s.NewContext()
 	defer ctx.Close()
 	ctxId := h.loadContext(req, ctx)
@@ -288,12 +312,12 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	switch t := resp.(type) {
 	case map[string]interface{}:
-		h.responseJSON(w, status, t)
+		h.responseJSON(w, req, status, t)
 	default:
 		if t != nil {
-			h.responseError(w, fmt.Sprintf("unexpected response type '%T'", t))
+			h.responseError(w, req, fmt.Sprintf("unexpected response type '%T'", t))
 		} else {
-			h.responseJSON(w, status, nil)
+			h.responseJSON(w, req, status, nil)
 		}
 	}
 

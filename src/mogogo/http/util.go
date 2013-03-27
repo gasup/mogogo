@@ -7,7 +7,7 @@ import (
 )
 
 func randId() string {
-	n := 15
+	n := 20
 	b := make([]byte, n)
 	n, err := io.ReadFull(rand.Reader, b)
 	if n != len(b) {

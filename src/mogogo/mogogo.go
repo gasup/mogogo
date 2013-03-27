@@ -340,7 +340,7 @@ func (b *Base) R(name string, ctx *Context) Resource {
 	}
 	return r
 }
-func (b *Base) AllRel() map[string]*ResId {
+func (b *Base) AllRels() map[string]*ResId {
 	ret := make(map[string]*ResId)
 	binds, ok := b.r.binds[b.t]
 	if !ok {
@@ -468,9 +468,14 @@ type Context struct {
 	s      *mgo.Session
 	sys    bool
 	values map[string]interface{}
-	newval bool
+	updated bool
 }
-
+func (ctx *Context)IsUpdated() bool {
+	return ctx.updated
+}
+func (ctx *Context)SetUpdated(b bool) {
+	ctx.updated = b
+}
 func (ctx *Context) S() Session {
 	return ctx.r
 }
@@ -485,7 +490,7 @@ func (ctx *Context) Get(key string) (val interface{}, ok bool) {
 	return
 }
 func (ctx *Context) Set(key string, val interface{}) {
-	ctx.newval = true
+	ctx.updated = true
 	ctx.values[key] = val
 }
 func (ctx *Context) reopen() {
@@ -1609,26 +1614,27 @@ func (r *rest) mapToStruct(m map[string]interface{}, s interface{}, baseURL *url
 		var v reflect.Value
 		var err error = nil
 		key := strings.ToLower(sf.Name)
-		elem := m[key]
+		elem, ok := m[key]
 		if sf.Type.Kind() == reflect.Ptr {
-			if elem != nil {
+			if ok {
 				v, err = r.mapElemToValue(reflect.ValueOf(elem), sf.Type.Elem(), key, baseURL)
 				if err == nil {
 					v = v.Addr()
 				}
 			}
 		} else if sf.Type.Kind() == reflect.Slice {
-			if elem != nil {
+			if ok {
 				v, err = r.mapElemToValue(reflect.ValueOf(elem), sf.Type, key, baseURL)
 			} else {
 				v = reflect.MakeSlice(sf.Type, 0, 0)
 			}
 		} else {
-			if elem == nil {
+			if !ok {
 				msg := fmt.Sprintf("field '%s' not set", key)
 				err = &Error{Code: BadRequest, Msg: msg}
+			} else {
+				v, err = r.mapElemToValue(reflect.ValueOf(elem), sf.Type, key, baseURL)
 			}
-			v, err = r.mapElemToValue(reflect.ValueOf(elem), sf.Type, key, baseURL)
 		}
 		if err != nil {
 			return err

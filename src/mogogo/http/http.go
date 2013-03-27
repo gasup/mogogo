@@ -7,6 +7,9 @@ import (
 	"mogogo"
 	"net/http"
 	"reflect"
+	"strconv"
+	"strings"
+	"time"
 )
 
 func getBase(s interface{}) (base *mogogo.Base, ok bool) {
@@ -18,8 +21,12 @@ func getBase(s interface{}) (base *mogogo.Base, ok bool) {
 	}
 	return
 }
-
+type ContextHandler interface {
+	Load(ctxId string, ctx *mogogo.Context, req *http.Request)
+	Store(ctxId string, ctx *mogogo.Context, req *http.Request)
+}
 type HTTPHandler struct {
+	ContextHandler ContextHandler
 	s mogogo.Session
 }
 
@@ -65,6 +72,21 @@ func (h *HTTPHandler) requestBody(req *http.Request, res mogogo.Resource) (body 
 	}
 	return
 }
+func (h *HTTPHandler) responseToMap(req *http.Request, rm mogogo.ResourceMeta, r interface{}) map[string]interface{} {
+	ret := rm.ResponseToMap(r, req.URL)
+	norels, _ := strconv.ParseBool(req.URL.Query().Get("norels"))
+	if norels {
+		return ret
+	}
+	base, ok := getBase(r)
+	if !ok {
+		return ret
+	}
+	for n, rid := range base.AllRels() {
+		ret[strings.ToLower(n)] = map[string]interface{} {"self":rid.URLWithBase(req.URL).String()}
+	}
+	return ret
+}
 func (h *HTTPHandler) responseIter(req *http.Request, iter mogogo.Iter, rm mogogo.ResourceMeta) (status int, resp interface{}) {
 	s, err := iter.Slice()
 	if err != nil {
@@ -87,7 +109,7 @@ func (h *HTTPHandler) responseIter(req *http.Request, iter mogogo.Iter, rm mogog
 	if s.HasItems() {
 		items := make([]interface{}, 0, len(s.Items()))
 		for _, v := range s.Items() {
-			i := rm.ResponseToMap(v, req.URL)
+			i := h.responseToMap(req, rm, v)
 			items = append(items, i)
 		}
 		m["items"] = items
@@ -108,7 +130,7 @@ func (h *HTTPHandler) responseBody(req *http.Request, r interface{}, res mogogo.
 			status = 200
 			resp = map[string]interface{}{"statusCode": status}
 		} else {
-			m := resMeta.ResponseToMap(r, req.URL)
+			m := h.responseToMap(req, resMeta, r)
 			if base, ok := getBase(r); ok && base.IsNew() {
 				status = 201
 			} else {
@@ -171,7 +193,6 @@ func (h *HTTPHandler) responseJSON(w http.ResponseWriter, status int, m map[stri
 	w.WriteHeader(status)
 	enc := json.NewEncoder(w)
 	err := enc.Encode(m)
-	//temp process
 	if err != nil {
 		log.Println(err)
 	}
@@ -180,6 +201,69 @@ func (h *HTTPHandler) responseError(w http.ResponseWriter, err interface{}) {
 	s, m := h.errToMap(err)
 	h.responseJSON(w, s, m)
 }
+const (
+	cookieKey = "MOGOGO_ID"
+	cookieTimeKey = "MOGOGO_TS"
+)
+func (h *HTTPHandler) loadContext(req *http.Request, ctx *mogogo.Context) (ctxId string) {
+	if h.ContextHandler == nil {
+		return
+	}
+	if c, err := req.Cookie(cookieKey); err == nil {
+		ctxId = c.Value
+		h.ContextHandler.Load(ctxId, ctx, req)
+	}
+	ctx.SetUpdated(false)
+	return
+}
+func (h *HTTPHandler) updateCookieExpires(w http.ResponseWriter, req *http.Request) {
+	if c, err := req.Cookie(cookieKey); err == nil {
+		var ts time.Time
+		cts, err := req.Cookie(cookieTimeKey)
+		if err == nil {
+			unix, err := strconv.ParseInt(cts.Value, 36, 64)
+			if err == nil {
+				ts = time.Unix(unix, 0)
+			} else {
+				ts = time.Unix(0, 0)
+			}
+		} else {
+			ts = time.Unix(0, 0)
+		}
+		if time.Since(ts) > 24 * time.Hour {
+			expires := time.Now().Add(365 * 24 * time.Hour)
+			c.Expires = expires
+			http.SetCookie(w, c)
+			http.SetCookie(w, &http.Cookie{
+				Name: cookieTimeKey,
+				Value: strconv.FormatInt(time.Now().Unix(), 36),
+				Expires: expires,
+			})
+		}
+	}
+}
+func (h *HTTPHandler) storeContext(ctxId string, w http.ResponseWriter, req *http.Request, ctx *mogogo.Context) {
+	if h.ContextHandler == nil {
+		return
+	}
+	if ctx.IsUpdated() {
+		if ctxId == "" {
+			ctxId = randId()
+			http.SetCookie(w, &http.Cookie{
+				Name: cookieKey,
+				Value: ctxId,
+				Expires: time.Now().Add(365 * 24 * time.Hour),
+			})
+			http.SetCookie(w, &http.Cookie{
+				Name: cookieTimeKey,
+				Value: strconv.FormatInt(time.Now().Unix(), 36),
+				Expires: time.Now().Add(365 * 24 * time.Hour),
+			})
+		}
+		h.ContextHandler.Store(ctxId, ctx, req)
+	}
+	h.updateCookieExpires(w, req)
+}
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	req.URL.Host = req.Host
 	if req.TLS == nil {
@@ -187,15 +271,21 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	} else {
 		req.URL.Scheme = "https"
 	}
+	/*
 	defer func() {
 		err := recover()
 		if err != nil {
 			h.responseError(w, err)
 		}
 	}()
+	*/
 	ctx := h.s.NewContext()
 	defer ctx.Close()
+	ctxId := h.loadContext(req, ctx)
 	status, resp := h.request(req, ctx)
+	h.storeContext(ctxId, w, req, ctx)
+	if h.ContextHandler != nil {
+	}
 	switch t := resp.(type) {
 	case map[string]interface{}:
 		h.responseJSON(w, status, t)

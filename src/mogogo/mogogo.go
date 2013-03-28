@@ -543,6 +543,7 @@ type ResourceMeta interface {
 	ResponseToMap(resp interface{}, base *url.URL) map[string]interface{}
 }
 type Resource interface {
+	Id() *ResId
 	Get() (result interface{}, err error)
 	Put(request interface{}) (response interface{}, err error)
 	Delete() (response interface{}, err error)
@@ -837,14 +838,12 @@ func (si *selectorIter) timelineSelf() *ResId {
 	ret := si.resId.Copy()
 	ret.Params.Del("prev")
 	ret.Params.Del("next")
-	ret.Params.Del("noitems")
 	return ret
 }
 func (si *selectorIter) timelinePrev(s *selectorSlice) *ResId {
 	ret := si.resId.Copy()
 	ret.Params.Del("prev")
 	ret.Params.Del("next")
-	ret.Params.Del("noitems")
 	prevId := getBase(reflect.ValueOf(s.items[0]).Elem()).id.Hex()
 	ret.Params.SetString("prev", prevId)
 	return ret
@@ -853,7 +852,6 @@ func (si *selectorIter) timelineNext(s *selectorSlice) *ResId {
 	ret := si.resId.Copy()
 	ret.Params.Del("prev")
 	ret.Params.Del("next")
-	ret.Params.Del("noitems")
 	nextId := getBase(reflect.ValueOf(s.items[len(s.items)-1]).Elem()).id.Hex()
 	ret.Params.SetString("next", nextId)
 	return ret
@@ -954,7 +952,6 @@ func (si *selectorIter) sortedSlice() (slice *selectorSlice, err error) {
 func (si *selectorIter) sortedNext(slice *selectorSlice, c, n int) *ResId {
 	ret := si.resId.Copy()
 	c += len(slice.items)
-	ret.Params.Del("noitems")
 	ret.Params.SetInt("c", c)
 	ret.Params.SetInt("n", n)
 	return ret
@@ -968,7 +965,6 @@ func (si *selectorIter) sortedPrev(c, n int) *ResId {
 	if n <= 0 {
 		return nil
 	}
-	ret.Params.Del("noitems")
 	ret.Params.SetInt("c", c)
 	ret.Params.SetInt("n", n)
 	return ret
@@ -976,7 +972,6 @@ func (si *selectorIter) sortedPrev(c, n int) *ResId {
 func (si *selectorIter) sortedSelf() *ResId {
 	ret := si.resId.Copy()
 	ret.Params.Del("c")
-	ret.Params.Del("noitems")
 	return ret
 }
 func (si *selectorIter) Slice() (slice Slice, err error) {
@@ -1168,9 +1163,8 @@ func (r *rest) structToMapElem(v reflect.Value, t reflect.Type, baseURL *url.URL
 	if hasBase(t) {
 		base := getBase(v)
 		ret = map[string]interface{}{
-			"id":   base.id.Hex(),
 			"type": strings.ToLower(base.t),
-			"self": base.Self().URLWithBase(baseURL).String(),
+			"href": base.Self().URLWithBase(baseURL).String(),
 		}
 
 	} else if t == urlType {
@@ -2472,7 +2466,9 @@ type resource struct {
 	ctx   *Context
 	r     *rest
 }
-
+func (res *resource) Id() *ResId {
+	return res.resId
+}
 func (res *resource) requestToBody(req interface{}) (body interface{}, err error) {
 	defRequestType := res.r.types[res.cq.RequestType]
 	requestType := reflect.TypeOf(req)

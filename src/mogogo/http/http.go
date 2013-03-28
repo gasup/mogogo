@@ -30,6 +30,7 @@ type ContextHandler interface {
 }
 type HTTPHandler struct {
 	ContextHandler ContextHandler
+	PrefetchConfig mogogo.M
 	s mogogo.Session
 }
 
@@ -75,22 +76,128 @@ func (h *HTTPHandler) requestBody(req *http.Request, res mogogo.Resource) (body 
 	}
 	return
 }
-func (h *HTTPHandler) responseToMap(req *http.Request, rm mogogo.ResourceMeta, r interface{}) map[string]interface{} {
-	ret := rm.ResponseToMap(r, req.URL)
-	norels, _ := strconv.ParseBool(req.URL.Query().Get("norels"))
-	if norels {
-		return ret
+func (h *HTTPHandler) requestForPrefetch(urlStr string, ctx *mogogo.Context, cfg mogogo.M) (ret map[string]interface{}) {
+	req, err := http.NewRequest("GET", urlStr, nil)
+	if err != nil {
+		panic(&mogogo.Error{Code:mogogo.InternalServerError, Err: err})
 	}
-	base, ok := getBase(r)
+	status, r := h.request(req, ctx, cfg, false)
+	m, ok := r.(map[string]interface{})
 	if !ok {
-		return ret
+		panic(&mogogo.Error{
+			Code:mogogo.InternalServerError,
+			Msg: fmt.Sprintf("prefetch only support json, but %T", r),
+		})
 	}
-	for n, rid := range base.AllRels() {
-		ret[strings.ToLower(n)] = map[string]interface{} {"self":rid.URLWithBase(req.URL).String()}
+	if status >= 500 {
+		panic(&mogogo.Error{
+			Code:mogogo.InternalServerError,
+			Msg: fmt.Sprintf("%v", m["statusMsg"]),
+		})
 	}
+	ret = m
+	return
+}
+func (h *HTTPHandler) prefetchField(req *http.Request, ctx *mogogo.Context, val interface{}, cfg mogogo.M) (ret interface{}) {
+	switch t := val.(type) {
+	case map[string]interface{}:
+		if href, ok := t["href"]; ok {
+			m := h.requestForPrefetch(href.(string), ctx, cfg)
+			m["href"] = href
+			ret = m
+		} else {
+			ret = val
+		}
+	default:
+		ret = val
+	}
+	return
+}
+func (h *HTTPHandler) prefetch(req *http.Request, ctx *mogogo.Context, m map[string]interface{}, cfg mogogo.M) {
+	if cfg == nil {
+		return
+	}
+
+	for f, v := range cfg {
+		if f[0] == '$' {
+			continue
+		}
+		fv, ok := m[f]
+		if !ok {
+			continue
+		}
+		var fieldcfg mogogo.M = nil
+		if v != nil {
+			fieldcfg, ok = v.(mogogo.M)
+			if !ok {
+				panic(&mogogo.Error{
+					Code: mogogo.InternalServerError,
+					Msg:fmt.Sprintf("'%s' want type mogogo.M", f),
+				});
+			}
+			hidden := getBool(fieldcfg, "$hidden")
+			if hidden {
+				delete(m, f)
+			} else {
+				m[f] = h.prefetchField(req, ctx, fv, fieldcfg)
+			}
+		} else {
+			m[f] = h.prefetchField(req, ctx, fv, nil)
+		}
+	}
+}
+func getBool(m mogogo.M, key string) (ret bool) {
+	if m == nil {
+		return false
+	}
+	val, ok := m[key]
+	if ok {
+		switch t := val.(type) {
+		case bool:
+			ret = t
+		case int:
+			switch t {
+			case 0:
+				ret = false
+			case 1:
+				ret = true
+			default:
+				panic(&mogogo.Error{
+					Code:mogogo.InternalServerError,
+					Msg:fmt.Sprintf("'%s' want type bool, got %d", key, t),
+				})
+			}
+		default:
+			panic(&mogogo.Error{
+				Code:mogogo.InternalServerError,
+				Msg:fmt.Sprintf("'%s' want type bool, got %v", key, t),
+			})
+		}
+	}  else {
+		ret = false
+	}
+	return
+}
+func (h *HTTPHandler) responseToMap(req *http.Request, ctx *mogogo.Context, rm mogogo.ResourceMeta, r interface{}, cfg mogogo.M, start bool) map[string]interface{} {
+	ret := rm.ResponseToMap(r, req.URL)
+	norels := false
+	if start {
+		norels, _ = strconv.ParseBool(req.URL.Query().Get("norels"))
+	} else {
+		norels = getBool(cfg, "$rels")
+	}
+	if !norels {
+		base, ok := getBase(r)
+		if ok {
+			for n, rid := range base.AllRels() {
+				ret[strings.ToLower(n)] = map[string]interface{} {"href":rid.URLWithBase(req.URL).String()}
+			}
+		}
+	}
+	h.prefetch(req, ctx, ret, cfg)
 	return ret
 }
-func (h *HTTPHandler) responseIter(req *http.Request, iter mogogo.Iter, rm mogogo.ResourceMeta) (status int, resp interface{}) {
+func (h *HTTPHandler) responseIter(req *http.Request, ctx *mogogo.Context, iter mogogo.Iter, rm mogogo.ResourceMeta, cfg mogogo.M, start bool) (status int, resp interface{}) {
 	s, err := iter.Slice()
 	if err != nil {
 		return h.errToMap(err)
@@ -112,7 +219,7 @@ func (h *HTTPHandler) responseIter(req *http.Request, iter mogogo.Iter, rm mogog
 	if s.HasItems() {
 		items := make([]interface{}, 0, len(s.Items()))
 		for _, v := range s.Items() {
-			i := h.responseToMap(req, rm, v)
+			i := h.responseToMap(req, ctx, rm, v, cfg, start)
 			items = append(items, i)
 		}
 		m["items"] = items
@@ -123,17 +230,17 @@ func (h *HTTPHandler) responseIter(req *http.Request, iter mogogo.Iter, rm mogog
 	m["statusCode"] = status
 	return
 }
-func (h *HTTPHandler) responseBody(req *http.Request, r interface{}, res mogogo.Resource) (status int, resp interface{}) {
+func (h *HTTPHandler) responseBody(req *http.Request, ctx *mogogo.Context, r interface{}, res mogogo.Resource, cfg mogogo.M, start bool) (status int, resp interface{}) {
 	resMeta := res.(mogogo.ResourceMeta)
 	switch t := r.(type) {
 	case mogogo.Iter:
-		status, resp = h.responseIter(req, t, resMeta)
+		status, resp = h.responseIter(req, ctx, t, resMeta, cfg, start)
 	default:
 		if r == nil {
 			status = 200
 			resp = map[string]interface{}{"statusCode": status}
 		} else {
-			m := h.responseToMap(req, resMeta, r)
+			m := h.responseToMap(req, ctx, resMeta, r, cfg, start)
 			if base, ok := getBase(r); ok && base.IsNew() {
 				status = 201
 			} else {
@@ -145,7 +252,19 @@ func (h *HTTPHandler) responseBody(req *http.Request, r interface{}, res mogogo.
 	}
 	return
 }
-func (h *HTTPHandler) request(req *http.Request, ctx *mogogo.Context) (status int, resp interface{}) {
+func (h *HTTPHandler) paramsFromConfig(resId *mogogo.ResId, cfg mogogo.M) {
+	if cfg == nil {
+		return
+	}
+	if n, ok := cfg["$n"]; ok {
+		resId.Params["n"] = fmt.Sprintf("%v", n)
+	} else if all, ok := cfg["$all"]; ok {
+		resId.Params["all"] = fmt.Sprintf("%v", all)
+	} else if noitems, ok := cfg["$noitems"]; ok {
+		resId.Params["noitems"] = fmt.Sprintf("%v", noitems)
+	}
+}
+func (h *HTTPHandler) request(req *http.Request, ctx *mogogo.Context, cfg mogogo.M,start bool) (status int, resp interface{}) {
 	resId, err := mogogo.ResIdFromURL(req.URL)
 	if err != nil {
 		return h.errToMap(err)
@@ -154,6 +273,15 @@ func (h *HTTPHandler) request(req *http.Request, ctx *mogogo.Context) (status in
 	if err != nil {
 		return h.errToMap(err)
 	}
+	if start {
+		var ok bool
+		cfg, ok = h.PrefetchConfig[resId.Name()].(mogogo.M)
+		if !ok {
+			rm := res.(mogogo.ResourceMeta)
+			cfg, ok = h.PrefetchConfig[rm.ResponseType().Name()].(mogogo.M)
+		}
+	}
+	h.paramsFromConfig(res.Id(), cfg)
 	var r interface{}
 	var body interface{}
 	switch req.Method {
@@ -185,7 +313,8 @@ func (h *HTTPHandler) request(req *http.Request, ctx *mogogo.Context) (status in
 	if err != nil {
 		return h.errToMap(err)
 	}
-	return h.responseBody(req, r, res)
+	status, resp =  h.responseBody(req, ctx, r, res, cfg, start)
+	return
 }
 func (h *HTTPHandler) compress(w http.ResponseWriter, req *http.Request) (cw io.WriteCloser, compressed bool) {
 	ae := req.Header.Get("Accept-Encoding")
@@ -306,7 +435,7 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	ctx := h.s.NewContext()
 	defer ctx.Close()
 	ctxId := h.loadContext(req, ctx)
-	status, resp := h.request(req, ctx)
+	status, resp := h.request(req, ctx, nil, true)
 	h.storeContext(ctxId, w, req, ctx)
 	if h.ContextHandler != nil {
 	}

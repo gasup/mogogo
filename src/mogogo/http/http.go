@@ -180,11 +180,17 @@ func getBool(m mogogo.M, key string) (ret bool) {
 }
 func (h *HTTPHandler) responseToMap(req *http.Request, ctx *mogogo.Context, rm mogogo.ResourceMeta, r interface{}, cfg mogogo.M, start bool) map[string]interface{} {
 	ret := rm.ResponseToMap(r, req.URL)
-	norels := false
+	var norels bool
 	if start {
 		norels, _ = strconv.ParseBool(req.URL.Query().Get("norels"))
 	} else {
-		norels = getBool(cfg, "$rels")
+		if cfg == nil {
+			norels = true
+		} else if _, ok := cfg["$norels"]; ok {
+			norels = getBool(cfg, "$norels")
+		} else {
+			norels = true
+		}
 	}
 	if !norels {
 		base, ok := getBase(r)

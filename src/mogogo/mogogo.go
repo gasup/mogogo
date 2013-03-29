@@ -464,16 +464,17 @@ type CustomResource struct {
 }
 
 type Context struct {
-	r      *rest
-	s      *mgo.Session
-	sys    bool
-	values map[string]interface{}
+	r       *rest
+	s       *mgo.Session
+	sys     bool
+	values  map[string]interface{}
 	updated bool
 }
-func (ctx *Context)IsUpdated() bool {
+
+func (ctx *Context) IsUpdated() bool {
 	return ctx.updated
 }
-func (ctx *Context)SetUpdated(b bool) {
+func (ctx *Context) SetUpdated(b bool) {
 	ctx.updated = b
 }
 func (ctx *Context) S() Session {
@@ -2466,6 +2467,7 @@ type resource struct {
 	ctx   *Context
 	r     *rest
 }
+
 func (res *resource) Id() *ResId {
 	return res.resId
 }

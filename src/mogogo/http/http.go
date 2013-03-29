@@ -1,18 +1,19 @@
 package http
 
 import (
+	"compress/flate"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"mogogo"
 	"net/http"
 	"reflect"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
-	"compress/gzip"
-	"compress/flate"
-	"io"
 )
 
 func getBase(s interface{}) (base *mogogo.Base, ok bool) {
@@ -24,6 +25,7 @@ func getBase(s interface{}) (base *mogogo.Base, ok bool) {
 	}
 	return
 }
+
 type ContextHandler interface {
 	Load(ctxId string, ctx *mogogo.Context, req *http.Request)
 	Store(ctxId string, ctx *mogogo.Context, req *http.Request)
@@ -31,7 +33,7 @@ type ContextHandler interface {
 type HTTPHandler struct {
 	ContextHandler ContextHandler
 	PrefetchConfig mogogo.M
-	s mogogo.Session
+	s              mogogo.Session
 }
 
 func (h *HTTPHandler) mggErrToMap(err *mogogo.Error) (status int, m map[string]interface{}) {
@@ -79,20 +81,20 @@ func (h *HTTPHandler) requestBody(req *http.Request, res mogogo.Resource) (body 
 func (h *HTTPHandler) requestForPrefetch(urlStr string, ctx *mogogo.Context, cfg mogogo.M) (ret map[string]interface{}) {
 	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
-		panic(&mogogo.Error{Code:mogogo.InternalServerError, Err: err})
+		panic(&mogogo.Error{Code: mogogo.InternalServerError, Err: err})
 	}
 	status, r := h.request(req, ctx, cfg, false)
 	m, ok := r.(map[string]interface{})
 	if !ok {
 		panic(&mogogo.Error{
-			Code:mogogo.InternalServerError,
-			Msg: fmt.Sprintf("prefetch only support json, but %T", r),
+			Code: mogogo.InternalServerError,
+			Msg:  fmt.Sprintf("prefetch only support json, but %T", r),
 		})
 	}
 	if status >= 500 {
 		panic(&mogogo.Error{
-			Code:mogogo.InternalServerError,
-			Msg: fmt.Sprintf("%v", m["statusMsg"]),
+			Code: mogogo.InternalServerError,
+			Msg:  fmt.Sprintf("%v", m["statusMsg"]),
 		})
 	}
 	ret = m
@@ -132,8 +134,8 @@ func (h *HTTPHandler) prefetch(req *http.Request, ctx *mogogo.Context, m map[str
 			if !ok {
 				panic(&mogogo.Error{
 					Code: mogogo.InternalServerError,
-					Msg:fmt.Sprintf("'%s' want type mogogo.M", f),
-				});
+					Msg:  fmt.Sprintf("'%s' want type mogogo.M", f),
+				})
 			}
 			hidden := getBool(fieldcfg, "$hidden")
 			if hidden {
@@ -163,17 +165,17 @@ func getBool(m mogogo.M, key string) (ret bool) {
 				ret = true
 			default:
 				panic(&mogogo.Error{
-					Code:mogogo.InternalServerError,
-					Msg:fmt.Sprintf("'%s' want type bool, got %d", key, t),
+					Code: mogogo.InternalServerError,
+					Msg:  fmt.Sprintf("'%s' want type bool, got %d", key, t),
 				})
 			}
 		default:
 			panic(&mogogo.Error{
-				Code:mogogo.InternalServerError,
-				Msg:fmt.Sprintf("'%s' want type bool, got %v", key, t),
+				Code: mogogo.InternalServerError,
+				Msg:  fmt.Sprintf("'%s' want type bool, got %v", key, t),
 			})
 		}
-	}  else {
+	} else {
 		ret = false
 	}
 	return
@@ -196,7 +198,7 @@ func (h *HTTPHandler) responseToMap(req *http.Request, ctx *mogogo.Context, rm m
 		base, ok := getBase(r)
 		if ok {
 			for n, rid := range base.AllRels() {
-				ret[strings.ToLower(n)] = map[string]interface{} {"href":rid.URLWithBase(req.URL).String()}
+				ret[strings.ToLower(n)] = map[string]interface{}{"href": rid.URLWithBase(req.URL).String()}
 			}
 		}
 	}
@@ -228,7 +230,7 @@ func (h *HTTPHandler) responseIter(req *http.Request, ctx *mogogo.Context, iter 
 			i := h.responseToMap(req, ctx, rm, v, cfg, start)
 			items = append(items, i)
 		}
-		m["items"] = items
+		m["slice"] = items
 		if len(items) == 0 {
 			status = 404
 		}
@@ -270,7 +272,7 @@ func (h *HTTPHandler) paramsFromConfig(resId *mogogo.ResId, cfg mogogo.M) {
 		resId.Params["noitems"] = fmt.Sprintf("%v", noitems)
 	}
 }
-func (h *HTTPHandler) request(req *http.Request, ctx *mogogo.Context, cfg mogogo.M,start bool) (status int, resp interface{}) {
+func (h *HTTPHandler) request(req *http.Request, ctx *mogogo.Context, cfg mogogo.M, start bool) (status int, resp interface{}) {
 	resId, err := mogogo.ResIdFromURL(req.URL)
 	if err != nil {
 		return h.errToMap(err)
@@ -319,7 +321,7 @@ func (h *HTTPHandler) request(req *http.Request, ctx *mogogo.Context, cfg mogogo
 	if err != nil {
 		return h.errToMap(err)
 	}
-	status, resp =  h.responseBody(req, ctx, r, res, cfg, start)
+	status, resp = h.responseBody(req, ctx, r, res, cfg, start)
 	return
 }
 func (h *HTTPHandler) compress(w http.ResponseWriter, req *http.Request) (cw io.WriteCloser, compressed bool) {
@@ -335,6 +337,21 @@ func (h *HTTPHandler) compress(w http.ResponseWriter, req *http.Request) (cw io.
 		cw, compressed = nil, false
 	}
 	return
+}
+func (h *HTTPHandler) log(w http.ResponseWriter, req *http.Request, status int, msg string) {
+	ip := req.Header.Get("X-Forwarded-For")
+	if ip == "" {
+		ip = req.RemoteAddr
+	}
+	ctxId := ""
+	if c, err := req.Cookie(cookieKey); err == nil {
+		ctxId = c.Value[0:12]
+	}
+	s := ""
+	if msg != "" {
+		s = " - "
+	}
+	log.Printf("%s \"%s\" %d \"%s\" \"%s\"%s%s\n", req.Method, req.URL.RequestURI(), status, ctxId, ip, s, msg)
 }
 func (h *HTTPHandler) responseJSON(w http.ResponseWriter, req *http.Request, status int, m map[string]interface{}) {
 	if m == nil {
@@ -354,18 +371,33 @@ func (h *HTTPHandler) responseJSON(w http.ResponseWriter, req *http.Request, sta
 		enc = json.NewEncoder(w)
 	}
 	err := enc.Encode(m)
+
 	if err != nil {
-		log.Println(err)
+		log.Printf("JSON ENCODE ERROR: %v\n%s\n", err, string(debug.Stack()))
 	}
+	msg := ""
+	if status >= 400 {
+		msg = m["statusMsg"].(string)
+		if stack, ok := m["stackTrace"]; ok {
+			msg = "! " + msg
+			msg = fmt.Sprintf("%s\n ! %s", msg, strings.Join(stack.([]string), "\n ! "))
+		}
+	}
+	h.log(w, req, status, msg)
 }
-func (h *HTTPHandler) responseError(w http.ResponseWriter, req *http.Request, err interface{}) {
+func (h *HTTPHandler) responseError(w http.ResponseWriter, req *http.Request, err interface{}, stack string) {
 	s, m := h.errToMap(err)
+	if stack != "" {
+		m["stackTrace"] = strings.Split(stack, "\n")
+	}
 	h.responseJSON(w, req, s, m)
 }
+
 const (
-	cookieKey = "MOGOGO_ID"
+	cookieKey     = "MOGOGO_ID"
 	cookieTimeKey = "MOGOGO_TS"
 )
+
 func (h *HTTPHandler) loadContext(req *http.Request, ctx *mogogo.Context) (ctxId string) {
 	if h.ContextHandler == nil {
 		return
@@ -391,13 +423,15 @@ func (h *HTTPHandler) updateCookieExpires(w http.ResponseWriter, req *http.Reque
 		} else {
 			ts = time.Unix(0, 0)
 		}
-		if time.Since(ts) > 24 * time.Hour {
+		if time.Since(ts) > 24*time.Hour {
 			expires := time.Now().Add(365 * 24 * time.Hour)
+			c.Path = "/"
 			c.Expires = expires
 			http.SetCookie(w, c)
 			http.SetCookie(w, &http.Cookie{
-				Name: cookieTimeKey,
-				Value: strconv.FormatInt(time.Now().Unix(), 36),
+				Name:    cookieTimeKey,
+				Value:   strconv.FormatInt(time.Now().Unix(), 36),
+				Path:    "/",
 				Expires: expires,
 			})
 		}
@@ -407,20 +441,22 @@ func (h *HTTPHandler) storeContext(ctxId string, w http.ResponseWriter, req *htt
 	if h.ContextHandler == nil {
 		return
 	}
+	if ctxId == "" {
+		ctxId = randId()
+		http.SetCookie(w, &http.Cookie{
+			Name:    cookieKey,
+			Value:   ctxId,
+			Path:    "/",
+			Expires: time.Now().Add(365 * 24 * time.Hour),
+		})
+		http.SetCookie(w, &http.Cookie{
+			Name:    cookieTimeKey,
+			Value:   strconv.FormatInt(time.Now().Unix(), 36),
+			Path:    "/",
+			Expires: time.Now().Add(365 * 24 * time.Hour),
+		})
+	}
 	if ctx.IsUpdated() {
-		if ctxId == "" {
-			ctxId = randId()
-			http.SetCookie(w, &http.Cookie{
-				Name: cookieKey,
-				Value: ctxId,
-				Expires: time.Now().Add(365 * 24 * time.Hour),
-			})
-			http.SetCookie(w, &http.Cookie{
-				Name: cookieTimeKey,
-				Value: strconv.FormatInt(time.Now().Unix(), 36),
-				Expires: time.Now().Add(365 * 24 * time.Hour),
-			})
-		}
 		h.ContextHandler.Store(ctxId, ctx, req)
 	}
 	h.updateCookieExpires(w, req)
@@ -435,7 +471,7 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	defer func() {
 		err := recover()
 		if err != nil {
-			h.responseError(w, req, err)
+			h.responseError(w, req, err, string(debug.Stack()))
 		}
 	}()
 	ctx := h.s.NewContext()
@@ -450,7 +486,7 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		h.responseJSON(w, req, status, t)
 	default:
 		if t != nil {
-			h.responseError(w, req, fmt.Sprintf("unexpected response type '%T'", t))
+			h.responseError(w, req, fmt.Sprintf("unexpected response type '%T'", t), "")
 		} else {
 			h.responseJSON(w, req, status, nil)
 		}

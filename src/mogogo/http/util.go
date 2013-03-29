@@ -2,8 +2,8 @@ package http
 
 import (
 	"crypto/rand"
-	"io"
 	"encoding/base32"
+	"io"
 )
 
 func randId() string {
@@ -18,4 +18,3 @@ func randId() string {
 	}
 	return base32.HexEncoding.EncodeToString(b)
 }
-

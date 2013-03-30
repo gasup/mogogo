@@ -385,7 +385,7 @@ func ExampleStructToMap() {
 	s.S.loaded = true
 	m := rest.structToMap(&s, baseURL1)
 	fmt.Println(m["self"])
-	fmt.Println(m["s"].(map[string]interface{})["self"])
+	fmt.Println(m["s"].(map[string]interface{})["href"])
 	fmt.Println(m["u1"])
 	fmt.Println(m["u2"])
 	//Output:http://abc.com/s/513063ef69ca944b1000000a

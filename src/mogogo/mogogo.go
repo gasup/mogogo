@@ -177,12 +177,12 @@ func (resId *ResId) Segment(index int) (val interface{}, err error) {
 	return
 }
 func (resId *ResId) URLWithBase(base *url.URL) *url.URL {
-	u := resId.url()
+	u := resId.URL()
 	u.Scheme = base.Scheme
 	u.Host = base.Host
 	return u
 }
-func (resId *ResId) url() *url.URL {
+func (resId *ResId) URL() *url.URL {
 	var u url.URL
 	u.Path = "/" + strings.Join(resId.path, "/")
 	vals := make(url.Values)
@@ -193,7 +193,7 @@ func (resId *ResId) url() *url.URL {
 	return &u
 }
 func (resId *ResId) String() string {
-	return resId.url().String()
+	return resId.URL().String()
 }
 func ResIdParse(s string) (resId *ResId, err error) {
 	url, err := url.Parse(s)
@@ -1076,14 +1076,15 @@ func (r *rest) bsonElemToStruct(v reflect.Value, t reflect.Type) reflect.Value {
 		if u, err := url.ParseRequestURI(s); err != nil {
 			panic(err)
 		} else {
-			ret = reflect.ValueOf(*u)
+			ret = reflect.ValueOf(u).Elem()
 		}
 	} else if t == timeType {
-		ret = reflect.ValueOf(v.Interface().(time.Time))
+		t := v.Interface().(time.Time)
+		ret = reflect.ValueOf(&t).Elem()
 	} else if t == geoType {
 		lon := v.Index(0).Interface().(float64)
 		lat := v.Index(1).Interface().(float64)
-		ret = reflect.ValueOf(Geo{La: lat, Lo: lon})
+		ret = reflect.ValueOf(&Geo{La: lat, Lo: lon}).Elem()
 	} else {
 		panic(fmt.Sprintf("not support struct type %v", t))
 	}
@@ -1404,7 +1405,7 @@ func (r *rest) mapElemToURL(v reflect.Value, t reflect.Type, key string, baseURL
 		u.Scheme = ""
 		u.Host = ""
 	}
-	ret = reflect.ValueOf(*u)
+	ret = reflect.ValueOf(u).Elem()
 	return ret, nil
 }
 func (r *rest) mapElemToTime(v reflect.Value, t reflect.Type, key string) (reflect.Value, error) {
@@ -1417,7 +1418,7 @@ func (r *rest) mapElemToTime(v reflect.Value, t reflect.Type, key string) (refle
 	if err != nil {
 		return ret, &Error{Code: BadRequest, Msg: "field '" + key + "'", Err: err}
 	}
-	ret = reflect.ValueOf(tm)
+	ret = reflect.ValueOf(&tm).Elem()
 	return ret, nil
 }
 func (r *rest) mapElemToGeo(v reflect.Value, t reflect.Type, key string) (reflect.Value, error) {
@@ -1432,7 +1433,7 @@ func (r *rest) mapElemToGeo(v reflect.Value, t reflect.Type, key string) (reflec
 	if !lonOk || !latOk {
 		return ret, &Error{Code: BadRequest, Msg: msg}
 	}
-	ret = reflect.ValueOf(Geo{La: lat, Lo: lon})
+	ret = reflect.ValueOf(&Geo{La: lat, Lo: lon}).Elem()
 	return ret, nil
 }
 func (r *rest) mapElemToStruct(v reflect.Value, t reflect.Type, key string, baseURL *url.URL) (reflect.Value, error) {
@@ -1794,7 +1795,9 @@ func (r *rest) DefType(def interface{}) {
 	}
 	checkQueryName(strings.ToLower(name))
 	r.types[name] = typ
-	r.defSelf(name)
+	if hasBase(typ) {
+		r.defSelf(name)
+	}
 }
 func (r *rest) defSelf(typ string) {
 	r.checkType(typ)
@@ -2446,12 +2449,16 @@ func (r *rest) newWithObjectId(typ reflect.Type, id bson.ObjectId) (val interfac
 	return b.self, nil
 }
 func (r *rest) newStruct(typ string) interface{} {
-	v := reflect.New(r.types[typ])
-	b := getBase(v.Elem())
-	b.t = typ
-	b.r = r
-	b.self = v.Interface()
-	return b.self
+	t := r.types[typ]
+	v := reflect.New(t)
+	ret := v.Interface()
+	if hasBase(t) {
+		b := getBase(v.Elem())
+		b.t = typ
+		b.r = r
+		b.self = ret
+	}
+	return ret
 }
 func (r *rest) newWithId(typ string, hex string) (val interface{}, err error) {
 	id, err := parseObjectId(hex)

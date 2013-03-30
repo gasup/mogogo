@@ -67,7 +67,7 @@ func (h *HTTPHandler) requestBody(req *http.Request, res mogogo.Resource) (body 
 		dec := json.NewDecoder(req.Body)
 		err = dec.Decode(&m)
 		if err != nil {
-			return nil, err
+			return nil, &mogogo.Error{Code: mogogo.BadRequest, Msg: "parse json error", Err: err}
 		}
 		if req.Method == "PATCH" {
 			body, err = resMeta.MapToUpdater(m, req.URL)
@@ -518,7 +518,7 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 func NewHTTPHandler(s mogogo.Session) *HTTPHandler {
 	if s == nil {
-		panic("'s' is null")
+		panic("param 's' is null")
 	}
 	return &HTTPHandler{s: s}
 }

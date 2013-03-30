@@ -377,7 +377,9 @@ func (h *HTTPHandler) responseJSON(w http.ResponseWriter, req *http.Request, sta
 	}
 	msg := ""
 	if status >= 400 {
-		msg = m["statusMsg"].(string)
+		if sm, ok := m["statusMsg"]; ok{
+			msg = sm.(string)
+		}
 		if stack, ok := m["stackTrace"]; ok {
 			msg = "! " + msg
 			msg = fmt.Sprintf("%s\n ! %s", msg, strings.Join(stack.([]string), "\n ! "))

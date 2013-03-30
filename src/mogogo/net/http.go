@@ -1,6 +1,7 @@
-package http
+package net
 
 import (
+	"bytes"
 	"compress/flate"
 	"compress/gzip"
 	"encoding/json"
@@ -324,21 +325,34 @@ func (h *HTTPHandler) request(req *http.Request, ctx *mogogo.Context, cfg mogogo
 	status, resp = h.responseBody(req, ctx, r, res, cfg, start)
 	return
 }
-func (h *HTTPHandler) compress(w http.ResponseWriter, req *http.Request) (cw io.WriteCloser, compressed bool) {
+func (h *HTTPHandler) compress(rw http.ResponseWriter, req *http.Request, m map[string]interface{}) (*bytes.Buffer, error) {
+	buf, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	ret := bytes.NewBuffer(make([]byte, 0, 512))
+	var w io.Writer
 	ae := req.Header.Get("Accept-Encoding")
 	if strings.Contains(ae, "gzip") {
-		w.Header().Set("Content-Encoding", "gzip")
-		cw, compressed = gzip.NewWriter(w), true
+		rw.Header().Set("Content-Encoding", "gzip")
+		gw := gzip.NewWriter(ret)
+		defer gw.Close()
+		w = gw
 	} else if strings.Contains(ae, "deflate") {
-		w.Header().Set("Content-Encoding", "deflate")
-		cw, _ = flate.NewWriter(w, flate.DefaultCompression)
-		compressed = true
+		rw.Header().Set("Content-Encoding", "deflate")
+		fw, _ := flate.NewWriter(ret, flate.DefaultCompression)
+		defer fw.Close()
+		w = fw
 	} else {
-		cw, compressed = nil, false
+		w = ret
 	}
-	return
+	_, err = w.Write(buf)
+	if err != nil {
+		return nil, err
+	}
+	return ret, nil
 }
-func (h *HTTPHandler) log(w http.ResponseWriter, req *http.Request, status int, msg string) {
+func (h *HTTPHandler) log(w http.ResponseWriter, req *http.Request, status int, msg string, startTime time.Time) {
 	ip := req.Header.Get("X-Forwarded-For")
 	if ip == "" {
 		ip = req.RemoteAddr
@@ -351,35 +365,13 @@ func (h *HTTPHandler) log(w http.ResponseWriter, req *http.Request, status int, 
 	if msg != "" {
 		s = " - "
 	}
-	log.Printf("%s \"%s\" %d \"%s\" \"%s\"%s%s\n", req.Method, req.URL.RequestURI(), status, ctxId, ip, s, msg)
+	elapsed := time.Now().Sub(startTime)
+	log.Printf("%s \"%s\" %d \"%s\" \"%s\" %v%s%s\n", req.Method, req.URL.RequestURI(), status, ctxId, ip, elapsed, s, msg)
 }
-func (h *HTTPHandler) responseJSON(w http.ResponseWriter, req *http.Request, status int, m map[string]interface{}) {
-	if m == nil {
-		w.WriteHeader(status)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "private, max-age=0")
-	w.Header().Set("Etag", "123456789")
-	cw, c := h.compress(w, req)
-	if c {
-		defer cw.Close()
-	}
-	w.WriteHeader(status)
-	var enc *json.Encoder
-	if c {
-		enc = json.NewEncoder(cw)
-	} else {
-		enc = json.NewEncoder(w)
-	}
-	err := enc.Encode(m)
-
-	if err != nil {
-		log.Printf("JSON ENCODE ERROR: %v\n%s\n", err, string(debug.Stack()))
-	}
+func (h *HTTPHandler) logMap(w http.ResponseWriter, req *http.Request, status int, m map[string]interface{}, startTime time.Time) {
 	msg := ""
 	if status >= 400 {
-		if sm, ok := m["statusMsg"]; ok{
+		if sm, ok := m["statusMsg"]; ok {
 			msg = sm.(string)
 		}
 		if stack, ok := m["stackTrace"]; ok {
@@ -387,14 +379,40 @@ func (h *HTTPHandler) responseJSON(w http.ResponseWriter, req *http.Request, sta
 			msg = fmt.Sprintf("%s\n ! %s", msg, strings.Join(stack.([]string), "\n ! "))
 		}
 	}
-	h.log(w, req, status, msg)
+	h.log(w, req, status, msg, startTime)
 }
-func (h *HTTPHandler) responseError(w http.ResponseWriter, req *http.Request, err interface{}, stack string) {
+func (h *HTTPHandler) responseJSON(w http.ResponseWriter, req *http.Request, status int, m map[string]interface{}, startTime time.Time) {
+	if m == nil {
+		w.WriteHeader(status)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "private, max-age=0")
+	buf, err := h.compress(w, req, m)
+	if err != nil {
+		h.responseError(w, req, err, "", startTime)
+		return
+	}
+	me := req.Header.Get("If-None-Match")
+	et := etag(buf.Bytes())
+	w.Header().Set("Etag", et)
+	if me == et {
+		w.WriteHeader(304)
+	} else {
+		w.WriteHeader(status)
+		_, err = buf.WriteTo(w)
+		if err != nil {
+			log.Printf("JSON ENCODE ERROR: %v\n", err)
+		}
+	}
+	h.logMap(w, req, status, m, startTime)
+}
+func (h *HTTPHandler) responseError(w http.ResponseWriter, req *http.Request, err interface{}, stack string, startTime time.Time) {
 	s, m := h.errToMap(err)
 	if stack != "" {
 		m["stackTrace"] = strings.Split(stack, "\n")
 	}
-	h.responseJSON(w, req, s, m)
+	h.responseJSON(w, req, s, m, startTime)
 }
 
 const (
@@ -466,6 +484,7 @@ func (h *HTTPHandler) storeContext(ctxId string, w http.ResponseWriter, req *htt
 	h.updateCookieExpires(w, req)
 }
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	startTime := time.Now()
 	req.URL.Host = req.Host
 	if req.TLS == nil {
 		req.URL.Scheme = "http"
@@ -475,7 +494,7 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	defer func() {
 		err := recover()
 		if err != nil {
-			h.responseError(w, req, err, string(debug.Stack()))
+			h.responseError(w, req, err, string(debug.Stack()), startTime)
 		}
 	}()
 	ctx := h.s.NewContext()
@@ -487,17 +506,17 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	switch t := resp.(type) {
 	case map[string]interface{}:
-		h.responseJSON(w, req, status, t)
+		h.responseJSON(w, req, status, t, startTime)
 	default:
 		if t != nil {
-			h.responseError(w, req, fmt.Sprintf("unexpected response type '%T'", t), "")
+			h.responseError(w, req, fmt.Sprintf("unexpected response type '%T'", t), "", startTime)
 		} else {
-			h.responseJSON(w, req, status, nil)
+			h.responseJSON(w, req, status, nil, startTime)
 		}
 	}
 
 }
-func NewHandler(s mogogo.Session) *HTTPHandler {
+func NewHTTPHandler(s mogogo.Session) *HTTPHandler {
 	if s == nil {
 		panic("'s' is null")
 	}

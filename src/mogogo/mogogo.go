@@ -185,11 +185,17 @@ func (resId *ResId) URLWithBase(base *url.URL) *url.URL {
 func (resId *ResId) URL() *url.URL {
 	var u url.URL
 	u.Path = "/" + strings.Join(resId.path, "/")
-	vals := make(url.Values)
-	for k, v := range resId.Params {
-		vals.Add(k, v)
+	keys := make([]string, 0, len(resId.Params))
+	for k, _ := range resId.Params {
+		keys = append(keys, k)
 	}
-	u.RawQuery = vals.Encode()
+	sort.Strings(keys)
+	pairs := make([]string, 0, len(resId.Params))
+	for _, k := range keys {
+		v := resId.Params[k]
+		pairs = append(pairs, url.QueryEscape(k)+"="+url.QueryEscape(v))
+	}
+	u.RawQuery = strings.Join(pairs, "&")
 	return &u
 }
 func (resId *ResId) String() string {

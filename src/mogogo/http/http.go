@@ -359,6 +359,8 @@ func (h *HTTPHandler) responseJSON(w http.ResponseWriter, req *http.Request, sta
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "private, max-age=0")
+	w.Header().Set("Etag", "123456789")
 	cw, c := h.compress(w, req)
 	if c {
 		defer cw.Close()

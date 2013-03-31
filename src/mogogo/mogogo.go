@@ -2,6 +2,7 @@ package mogogo
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -2723,6 +2724,13 @@ func init() {
 	image.RegisterFormat("jpeg", "jpegdecoder", jpeg.Decode, jpeg.DecodeConfig)
 }
 
+var imageEncoder = map[string]func(w io.Writer, m image.Image) error{
+	"png": png.Encode,
+	"jpeg": func(w io.Writer, m image.Image) error {
+		return jpeg.Encode(w, m, &jpeg.Options{90})
+	},
+}
+
 type peekReader struct {
 	r *bufio.Reader
 }
@@ -2742,7 +2750,78 @@ type imageHandler struct {
 	iq *ImageResource
 }
 
+func adjustSize(size image.Point, b *Bound) (w, h int) {
+	switch b.Type {
+	case Square:
+		sx := float64(b.Value) / float64(size.X)
+		sy := float64(b.Value) / float64(size.Y)
+		var s float64
+		if sx < sy {
+			s = sx
+		} else {
+			s = sy
+		}
+		w, h = int(math.Floor(float64(size.X)*s+0.5)), int(math.Floor(float64(size.Y)*s+0.5))
+	case Width:
+		s := float64(b.Value) / float64(size.X)
+		w, h = b.Value, int(math.Floor(float64(size.Y)*s+0.5))
+	case Height:
+		s := float64(b.Value) / float64(size.Y)
+		w, h = int(math.Floor(float64(size.X)*s+0.5)), b.Value
+	}
+	return
+}
+func resize(r io.Reader, b *Bound) (io.ReadCloser, error) {
+	var buf bytes.Buffer
+	img, name, err := image.Decode(r)
+	if err != nil {
+		return nil, err
+	}
+	w, h := adjustSize(img.Bounds().Size(), b)
+	img = Resize(img, img.Bounds(), w, h)
+	err = imageEncoder[name](&buf, img)
+	if err != nil {
+		return nil, err
+	}
+	return &fakeCloser{bytes.NewBuffer(buf.Bytes())}, nil
+}
+func (h *imageHandler) validSize() string {
+	keys := make([]string, 0, len(h.iq.Bounds))
+	for k, _ := range h.iq.Bounds {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, 0, len(h.iq.Bounds))
+	for _, k := range keys {
+		b := h.iq.Bounds[k]
+		var t string
+		switch b.Type {
+		case Square:
+			t = "s"
+		case Width:
+			t = "w"
+		case Height:
+			t = "h"
+		}
+		pair := fmt.Sprintf("%s:%s(%d)", k, t, b.Value)
+		pairs = append(pairs, pair)
+	}
+	return strings.Join(pairs, ", ")
+
+}
 func (h *imageHandler) Get(req *Req, ctx *Context) (result interface{}, err error) {
+	var bound *Bound = nil
+	size, ok := req.Params["size"]
+	if ok {
+		bound, ok = h.iq.Bounds[size]
+		fmt.Println("bound:", bound)
+		if !ok {
+			return nil, &Error{
+				Code: BadRequest,
+				Msg:  fmt.Sprintf("invalid value for size:'%s', ALLOW: %s", size, h.validSize()),
+			}
+		}
+	}
 	if len(req.path) < 2 {
 		return nil, &Error{Code: NotFound}
 	}
@@ -2764,6 +2843,10 @@ func (h *imageHandler) Get(req *Req, ctx *Context) (result interface{}, err erro
 				return nil, err
 			}
 			self.mediaType = f.ContentType()
+			if bound != nil {
+				defer f.Close()
+				return resize(f, bound)
+			}
 			return f, nil
 		},
 	}

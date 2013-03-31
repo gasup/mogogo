@@ -1,10 +1,16 @@
 package mogogo
 
 import (
+	"bufio"
 	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
+	"io"
 	"labix.org/v2/mgo"
 	"labix.org/v2/mgo/bson"
 	"math"
+	"mime"
 	"net/url"
 	"reflect"
 	"sort"
@@ -151,11 +157,11 @@ func (resId *ResId) NumSegment() int {
 }
 func (resId *ResId) Segment(index int) (val interface{}, err error) {
 	cq := resId.r.queries[resId.path[0]]
-	if resId.NumSegment() != len(cq.PathSegmentTypes) {
+	if resId.NumSegment() < len(cq.PathSegmentTypes) {
 		msg := fmt.Sprintf("path need %d segments, got %d", len(cq.PathSegmentTypes)+1, resId.NumSegment()+1)
 		return nil, &Error{Code: BadRequest, Msg: msg}
 	}
-	if index < 0 || index >= resId.NumSegment() {
+	if index < 0 || index >= len(cq.PathSegmentTypes) {
 		panic(fmt.Sprintf("index out of bound: %d", index))
 	}
 	typ := cq.PathSegmentTypes[index]
@@ -270,6 +276,7 @@ type Base struct {
 var baseType = reflect.TypeOf(Base{})
 var urlType = reflect.TypeOf(url.URL{})
 var timeType = reflect.TypeOf(time.Time{})
+var binaryType = reflect.TypeOf(binary{})
 
 func hasBase(t reflect.Type) bool {
 	ft, ok := t.FieldByName("Base")
@@ -443,6 +450,22 @@ type SelectorResource struct {
 	Count            bool
 	Limit            int
 }
+type BoundType int
+
+const (
+	Square BoundType = iota
+	Width
+	Height
+)
+
+type Bound struct {
+	Type  BoundType
+	Value int
+}
+type ImageResource struct {
+	Bounds map[string]*Bound
+}
+
 type Verifiable interface {
 	Verify() (ok bool, msg string)
 }
@@ -517,6 +540,12 @@ func (ctx *Context) coll(typ string) *mgo.Collection {
 	}
 	return ctx.s.DB(ctx.r.db).C(strings.ToLower(typ))
 }
+func (ctx *Context) fs() *mgo.GridFS {
+	if ctx.s == nil {
+		panic("context closed")
+	}
+	return ctx.s.DB(ctx.r.db).GridFS("fs")
+}
 
 type Req struct {
 	*ResId
@@ -541,8 +570,16 @@ type Iter interface {
 	Slice() (slice Slice, err error)
 	Extract(field string, result interface{})
 }
+type Binary interface {
+	HasReader() bool
+	Reader() (io.ReadCloser, error)
+	Location() (*ResId, bool)
+	MediaType() string
+}
 type ResourceMeta interface {
 	NewRequest() interface{}
+	CanBinary() bool
+	NewBinary(reader io.Reader, mediaType string) Binary
 	RequestType() reflect.Type
 	ResponseType() reflect.Type
 	MapToRequest(m map[string]interface{}, base *url.URL) (interface{}, error)
@@ -1171,6 +1208,7 @@ func (r *rest) structToMapElem(v reflect.Value, t reflect.Type, baseURL *url.URL
 	if hasBase(t) {
 		base := getBase(v)
 		ret = map[string]interface{}{
+			"id":   base.id.Hex(),
 			"type": strings.ToLower(base.t),
 			"href": base.Self().URLWithBase(baseURL).String(),
 		}
@@ -1820,6 +1858,8 @@ func (r *rest) DefRes(name string, resource interface{}) {
 		r.defFieldResource(name, res)
 	case SelectorResource:
 		r.defSelectorResource(name, res)
+	case ImageResource:
+		r.defImageResource(name, res)
 	case CustomResource:
 		r.defCustomResource(name, res)
 	default:
@@ -2381,6 +2421,14 @@ func (r *rest) defSelectorResource(name string, sq SelectorResource) {
 	cq := CustomResource{sq.Type, sq.Type, sq.PathSegmentTypes, h}
 	r.defCustomResource(name, cq)
 }
+func (r *rest) defImageResource(name string, iq ImageResource) {
+	if !r.typeDefined("binary") {
+		r.DefType(binary{})
+	}
+	h := &imageHandler{r, &iq}
+	cq := CustomResource{"binary", "binary", nil, h}
+	r.defCustomResource(name, cq)
+}
 func (r *rest) checkPathSegmentTypes(segtype []string) {
 	for _, e := range segtype {
 		if r.typeDefined(e) {
@@ -2619,6 +2667,21 @@ func (res *resource) Patch(request interface{}) (response interface{}, err error
 func (res *resource) NewRequest() interface{} {
 	return res.r.newStruct(res.cq.RequestType)
 }
+func (res *resource) CanBinary() bool {
+	return res.RequestType() == binaryType
+}
+func (res *resource) NewBinary(reader io.Reader, mediaType string) Binary {
+	if !res.CanBinary() {
+		panic("can't binary")
+	}
+	return &binary{
+		readerFunc: func(self *binary) (io.ReadCloser, error) {
+			return &fakeCloser{reader}, nil
+		},
+		location:  nil,
+		mediaType: mediaType,
+	}
+}
 func (res *resource) RequestType() reflect.Type {
 	return res.r.types[res.cq.RequestType]
 }
@@ -2654,4 +2717,154 @@ func (r *rest) R(resId *ResId, ctx *Context) (res Resource, err error) {
 	}
 	msg := fmt.Sprintf("no resource named '%s'", resId.String())
 	return nil, &Error{Code: NotFound, Msg: msg}
+}
+func init() {
+	image.RegisterFormat("png", "pngdecoder", png.Decode, png.DecodeConfig)
+	image.RegisterFormat("jpeg", "jpegdecoder", jpeg.Decode, jpeg.DecodeConfig)
+}
+
+type peekReader struct {
+	r *bufio.Reader
+}
+
+func (pr *peekReader) Read(p []byte) (n int, err error) {
+	pb, err := pr.r.Peek(len(p))
+	copy(p, pb)
+	n = len(pb)
+	return
+}
+func newPeekReader(r io.Reader) *peekReader {
+	return &peekReader{bufio.NewReader(r)}
+}
+
+type imageHandler struct {
+	r  *rest
+	iq *ImageResource
+}
+
+func (h *imageHandler) Get(req *Req, ctx *Context) (result interface{}, err error) {
+	if len(req.path) < 2 {
+		return nil, &Error{Code: NotFound}
+	}
+	fn := req.path[1]
+	fns := strings.Split(fn, ".")
+	if len(fns) < 2 {
+		return nil, &Error{Code: BadRequest, Msg: "filename format error"}
+	}
+	id, err := parseObjectId(fns[0])
+	if err != nil {
+		return nil, &Error{Code: BadRequest, Msg: "filename format error", Err: err}
+	}
+	ret := &binary{
+		readerFunc: func(self *binary) (io.ReadCloser, error) {
+			f, err := ctx.fs().OpenId(id)
+			if err == mgo.ErrNotFound {
+				return nil, &Error{Code: NotFound}
+			} else if err != nil {
+				return nil, err
+			}
+			self.mediaType = f.ContentType()
+			return f, nil
+		},
+	}
+	return ret, nil
+}
+func (h *imageHandler) parseMediaType(pr *peekReader) (name string, err error) {
+	_, name, err = image.DecodeConfig(pr)
+	return
+}
+func (h *imageHandler) Post(req *Req, ctx *Context) (result interface{}, err error) {
+	bin := req.Body.(*binary)
+	r, err := bin.Reader()
+	if err != nil {
+		return nil, &Error{
+			Code: InternalServerError,
+			Msg:  "get reader from request",
+			Err:  err,
+		}
+	}
+	defer r.Close()
+	mt, _, err := mime.ParseMediaType(bin.MediaType())
+	if err != nil {
+		return nil, &Error{
+			Code: BadRequest,
+			Msg:  fmt.Sprintf("media type format error '%s'", bin.MediaType()),
+			Err:  err,
+		}
+	}
+	mts := strings.Split(mt, "/")
+	if len(mts) != 2 || mts[0] != "image" {
+		return nil, &Error{
+			Code: UnsupportedMediaType,
+			Msg:  fmt.Sprintf("unsupported media type '%s'", bin.MediaType()),
+		}
+	}
+	pr := newPeekReader(r)
+	mts[1], err = h.parseMediaType(pr)
+	if err != nil {
+		return nil, &Error{
+			Code: BadRequest,
+			Msg:  "parse image file error",
+			Err:  err,
+		}
+	}
+	f, err := ctx.fs().Create("")
+	fn := f.Id().(bson.ObjectId).Hex() + "." + mts[1]
+	if err != nil {
+		return nil, &Error{
+			Code: InternalServerError,
+			Msg:  "create file",
+			Err:  err,
+		}
+	}
+	defer f.Close()
+	f.SetContentType(strings.Join(mts, "/"))
+	_, err = io.Copy(f, pr.r)
+	if err != nil {
+		return nil, err
+	}
+	return &binary{location: NewResId(req.Name(), fn)}, nil
+}
+
+type fakeCloser struct {
+	reader io.Reader
+}
+
+func (fc *fakeCloser) Read(p []byte) (n int, err error) {
+	return fc.reader.Read(p)
+}
+func (fc *fakeCloser) Close() error {
+	//do nothing
+	return nil
+}
+
+type binary struct {
+	reader     io.ReadCloser
+	readerFunc func(self *binary) (io.ReadCloser, error)
+	location   *ResId
+	mediaType  string
+}
+
+func (b *binary) HasReader() bool {
+	return b.readerFunc != nil
+}
+func (b *binary) Reader() (io.ReadCloser, error) {
+	if !b.HasReader() {
+		panic("no reader")
+	}
+	var err error
+	b.reader, err = b.readerFunc(b)
+	return b.reader, err
+}
+func (b *binary) Location() (*ResId, bool) {
+	return b.location, b.location != nil
+}
+func (b *binary) MediaType() string {
+	if !b.HasReader() {
+		panic("no reader")
+	}
+	if b.reader == nil {
+		panic("call Reader() first")
+	}
+	return b.mediaType
 }

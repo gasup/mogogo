@@ -74,6 +74,9 @@ func (h *HTTPHandler) requestBody(req *http.Request, res mogogo.Resource) (body 
 		} else {
 			body, err = resMeta.MapToRequest(m, req.URL)
 		}
+	} else if resMeta.CanBinary() {
+		return resMeta.NewBinary(req.Body, ct), nil
+
 	} else {
 		body, err = nil, &mogogo.Error{Code: mogogo.UnsupportedMediaType}
 	}
@@ -244,6 +247,14 @@ func (h *HTTPHandler) responseBody(req *http.Request, ctx *mogogo.Context, r int
 	switch t := r.(type) {
 	case mogogo.Iter:
 		status, resp = h.responseIter(req, ctx, t, resMeta, cfg, start)
+	case mogogo.Binary:
+		resp = t
+		if _, ok := t.Location(); ok {
+			status = 201
+		} else {
+			status = 200
+		}
+
 	default:
 		if r == nil {
 			status = 200
@@ -381,6 +392,42 @@ func (h *HTTPHandler) logMap(w http.ResponseWriter, req *http.Request, status in
 	}
 	h.log(w, req, status, msg, startTime)
 }
+func (h *HTTPHandler) responseBinary(w http.ResponseWriter, req *http.Request, status int, b mogogo.Binary, startTime time.Time) {
+
+	w.Header().Set("Server", "MOGOGO/0.1")
+	if req.Header.Get("If-None-Match") == "1" {
+		w.Header().Set("Cache-Control", "public, max-age=31536000")
+		w.Header().Set("Etag", "1")
+		status = 304
+		w.WriteHeader(status)
+	} else if b.HasReader() {
+		r, err := b.Reader()
+		if err != nil {
+			h.responseError(w, req, err, "", startTime)
+			return
+		}
+		defer r.Close()
+		w.Header().Set("Content-Type", b.MediaType())
+		w.Header().Set("Cache-Control", "public, max-age=31536000")
+		w.Header().Set("Etag", "1")
+		w.WriteHeader(status)
+		_, err = io.Copy(w, r)
+		if err != nil {
+			log.Printf("WRITE DATA ERROR: %v\n", err)
+		}
+
+	} else {
+		m := make(map[string]interface{})
+		m["statusCode"] = status
+		if loc, ok := b.Location(); ok {
+			m["location"] = loc.URLWithBase(req.URL).String()
+		}
+		h.responseJSON(w, req, status, m, startTime)
+		return
+	}
+	h.log(w, req, status, "", startTime)
+}
+
 func (h *HTTPHandler) responseJSON(w http.ResponseWriter, req *http.Request, status int, m map[string]interface{}, startTime time.Time) {
 	if m == nil {
 		w.WriteHeader(status)
@@ -388,6 +435,7 @@ func (h *HTTPHandler) responseJSON(w http.ResponseWriter, req *http.Request, sta
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "private, max-age=0")
+	w.Header().Set("Server", "MOGOGO/0.1")
 	buf, err := h.compress(w, req, m)
 	if err != nil {
 		h.responseError(w, req, err, "", startTime)
@@ -397,12 +445,13 @@ func (h *HTTPHandler) responseJSON(w http.ResponseWriter, req *http.Request, sta
 	et := etag(buf.Bytes())
 	w.Header().Set("Etag", et)
 	if me == et {
-		w.WriteHeader(304)
+		status = 304
+		w.WriteHeader(status)
 	} else {
 		w.WriteHeader(status)
 		_, err = buf.WriteTo(w)
 		if err != nil {
-			log.Printf("JSON ENCODE ERROR: %v\n", err)
+			log.Printf("WRITE DATA ERROR: %v\n", err)
 		}
 	}
 	h.logMap(w, req, status, m, startTime)
@@ -507,12 +556,10 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	switch t := resp.(type) {
 	case map[string]interface{}:
 		h.responseJSON(w, req, status, t, startTime)
+	case mogogo.Binary:
+		h.responseBinary(w, req, status, t, startTime)
 	default:
-		if t != nil {
-			h.responseError(w, req, fmt.Sprintf("unexpected response type '%T'", t), "", startTime)
-		} else {
-			h.responseJSON(w, req, status, nil, startTime)
-		}
+		h.responseError(w, req, fmt.Sprintf("unexpected response type '%T'", t), "", startTime)
 	}
 
 }

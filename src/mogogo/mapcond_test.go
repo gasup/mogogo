@@ -2,10 +2,10 @@ package mogogo
 
 import (
 	"time"
-	"fmt"
+	"testing"
 )
 
-func ExampleMapCond() {
+func TestMapCond(t *testing.T) {
 	mc := newMapCond()
 	mc.Timeout = 3 * time.Second
 	go func() {
@@ -27,7 +27,6 @@ func ExampleMapCond() {
 	}
 	timeout := mc.Wait(m)
 	if timeout {
-		fmt.Println("timeout falied")
+		t.Errorf("timeout")
 	}
-	//Output:hello
 }

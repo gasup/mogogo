@@ -1,26 +1,13 @@
 package mogogo
 
 import (
-	"reflect"
 	"sort"
 	"sync"
 	"time"
-	"fmt"
 )
 
-type keyset interface{}
-
-func ks2slice(ks keyset) (ret []string) {
-	v := reflect.ValueOf(ks)
-	l := v.Len()
-	ret = make([]string, 0, v.Len())
-	for i := 0; i < l; i++ {
-		ret = append(ret, v.Index(i).Interface().(string))
-	}
-	return
-}
-
-type valarray interface{}
+type keyset [8]string
+type valarray [8]interface{}
 type waitlist map[uint]chan bool
 type mapCond struct {
 	nextId       uint
@@ -42,98 +29,37 @@ func newMapCond() *mapCond {
 }
 func (mc *mapCond) getKeySet(m map[string]interface{}) keyset {
 	var ret keyset
-	var s []string
-	switch len(m) {
-	case 0:
-		a0 := [0]string{}
-		ret = a0
-		s = a0[:]
-	case 1:
-		a1 := [1]string{}
-		ret = a1
-		s = a1[:]
-	case 2:
-		a2 := [2]string{}
-		ret = a2
-		s = a2[:]
-	case 3:
-		a3 := [3]string{}
-		ret = a3
-		s = a3[:]
-	case 4:
-		a4 := [4]string{}
-		ret = a4
-		s = a4[:]
-	case 5:
-		a5 := [5]string{}
-		ret = a5
-		s = a5[:]
-	case 6:
-		a6 := [6]string{}
-		ret = a6
-		s = a6[:]
-	case 7:
-		a7 := [7]string{}
-		ret = a7
-		s = a7[:]
-	default:
-		panic("max length is 8")
+	if len(m) > 8 {
+		panic("map len cannot great than 8")
 	}
-	i := 0
+	var s []string = make([]string, 0, len(m))
 	for k, _ := range m {
-		s[i] = k
-		i++
+		if k == "" {
+			panic("map key cannot empty")
+		}
+		s = append(s, k)
 	}
 	sort.Strings(s)
-	fmt.Println("getks:", ret)
+	for i, k := range s {
+		ret[i] = k
+	}
 	return ret
 }
 func (mc *mapCond) getValArray(m map[string]interface{}, ks keyset) valarray {
 	var ret valarray
-	var s []interface{}
-	switch len(m) {
-	case 0:
-		a0 := [0]interface{}{}
-		ret = a0
-		s = a0[:]
-	case 1:
-		a1 := [1]interface{}{}
-		ret = a1
-		s = a1[:]
-	case 2:
-		a2 := [2]interface{}{}
-		ret = a2
-		s = a2[:]
-	case 3:
-		a3 := [3]interface{}{}
-		ret = a3
-		s = a3[:]
-	case 4:
-		a4 := [4]interface{}{}
-		ret = a4
-		s = a4[:]
-	case 5:
-		a5 := [5]interface{}{}
-		ret = a5
-		s = a5[:]
-	case 6:
-		a6 := [6]interface{}{}
-		ret = a6
-		s = a6[:]
-	case 7:
-		a7 := [7]interface{}{}
-		ret = a7
-		s = a7[:]
-	default:
-		panic("max length is 8")
-	}
-	for i, k := range ks2slice(ks) {
-		s[i] = m[k]
+	for i, k := range ks {
+		if k == "" {
+			break
+		}
+		ret[i] = m[k]
 	}
 	return ret
 }
 func (mc *mapCond) matchKeySet(ks keyset, m map[string]interface{}) bool {
-	for _, k := range ks2slice(ks) {
+	for _, k := range ks {
+		if k == "" {
+			return true
+		}
 		if _, ok := m[k]; !ok {
 			return false
 		}
@@ -168,7 +94,6 @@ func (mc *mapCond) waitOn(cond map[string]interface{}) (id uint, wait <-chan boo
 	defer mc.l.Unlock()
 	ks := mc.getKeySet(cond)
 	va := mc.getValArray(cond, ks)
-	fmt.Println("wt:", ks, va)
 	return mc.addWaitList(ks, va)
 
 }
@@ -202,10 +127,8 @@ func (mc *mapCond) Broadcast(m map[string]interface{}) {
 	mc.l.Lock()
 	defer mc.l.Unlock()
 	for ks, _ := range mc.keySets {
-		fmt.Println("bc:", ks)
 		if mc.matchKeySet(ks, m) {
 			va := mc.getValArray(m, ks)
-			fmt.Println("bc:", ks, va)
 			mc.broadcast(ks, va)
 		}
 	}

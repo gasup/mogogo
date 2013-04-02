@@ -2803,7 +2803,7 @@ func (h *imageHandler) validSize() string {
 		case Height:
 			t = "h"
 		}
-		pair := fmt.Sprintf("%s:%s(%d)", k, t, b.Value)
+		pair := fmt.Sprintf("%s:%s%d", k, t, b.Value)
 		pairs = append(pairs, pair)
 	}
 	return strings.Join(pairs, ", ")

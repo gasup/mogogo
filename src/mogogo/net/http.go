@@ -62,6 +62,9 @@ func (h *HTTPHandler) errToMap(err interface{}) (status int, m map[string]interf
 func (h *HTTPHandler) requestBody(req *http.Request, res mogogo.Resource) (body interface{}, err error) {
 	resMeta := res.(mogogo.ResourceMeta)
 	ct := req.Header.Get("Content-Type")
+	if ct != "" && req.Body == nil {
+		return nil, &mogogo.Error{Code: mogogo.BadRequest, Msg:"provide content-type, but body is empty"}
+	}
 	if ct == "application/json" {
 		var m map[string]interface{}
 		dec := json.NewDecoder(req.Body)

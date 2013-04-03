@@ -822,11 +822,11 @@ func (si *selectorIter) timelineItemsPrev(next bson.ObjectId, n int, all bool) (
 func (si *selectorIter) timelineItemsNext(next bson.ObjectId, n int, all bool) (ret []interface{}) {
 	ret = si._timelineItemsNext(next, n, all)
 	if si.pull && len(ret) == 0 {
-		//si.ctx.Close()
+		si.ctx.Close()
 		sel := si.copySel()
 		sel["$type"] = si.typ.Name()
 		si.r.mc.Wait(sel)
-		//si.ctx.reopen()
+		si.ctx.reopen()
 		ret = si._timelineItemsNext(next, n, all)
 	}
 	return ret

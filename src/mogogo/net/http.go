@@ -447,6 +447,7 @@ func (h *HTTPHandler) responseJSON(w http.ResponseWriter, req *http.Request, sta
 	et := etag(buf.Bytes())
 	w.Header().Set("Etag", et)
 	if me == et {
+		w.Header().Del("Content-Encoding")
 		status = 304
 		w.WriteHeader(status)
 	} else {

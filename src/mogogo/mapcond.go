@@ -76,7 +76,7 @@ func (mc *mapCond) addWaitList(ks keyset, va valarray) (id uint, wait <-chan boo
 		wl = make(waitlist)
 		wls[va] = wl
 	} else {
-		wl, ok := wls[va]
+		wl, ok = wls[va]
 		if !ok {
 			wl = make(waitlist)
 			wls[va] = wl
@@ -105,13 +105,13 @@ func (mc *mapCond) removeId(id uint) {
 }
 func (mc *mapCond) Wait(cond map[string]interface{}) (timeout bool) {
 	id, w := mc.waitOn(cond)
+	defer mc.removeId(id)
 	select {
 	case _ = <-w:
 		timeout = false
 	case _ = <-time.After(mc.Timeout):
 		timeout = true
 	}
-	mc.removeId(id)
 	return
 }
 func (mc *mapCond) broadcast(ks keyset, va valarray) {

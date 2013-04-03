@@ -623,6 +623,8 @@ func Dial(s *mgo.Session, db string) Session {
 		make(map[string]*CustomResource),
 		make(map[string]map[string]*bind),
 		make(map[hookKey]interface{}),
+		newMapCond(),
+		make(map[string]bool),
 	}
 }
 
@@ -689,6 +691,7 @@ type selectorIter struct {
 	resId      *ResId
 	ctx        *Context
 	sel        bson.M
+	lastId     bson.ObjectId
 	iter       *mgo.Iter
 }
 
@@ -736,15 +739,31 @@ func (si *selectorIter) Extract(field string, result interface{}) {
 	v.Set(si.r.bsonElemToSlice(reflect.ValueOf(tmp), v.Type()))
 }
 func (si *selectorIter) Next() (result interface{}, ok bool) {
+	result, ok = si.next()
+	if si.pull && !ok {
+		sel := si.copySel()
+		sel["$type"] = si.typ.Name()
+		si.iter = nil
+		si.r.mc.Wait(sel)
+		result, ok = si.next()
+	}
+	return
+}
+func (si *selectorIter) next() (result interface{}, ok bool) {
 	if si.iter == nil {
 		if len(si.sortFields) > 0 {
-			si.iter = si.query().Sort(si.sortFields...).Iter()
+			sel := si.copySel()
+			if si.lastId != "" && si.isAscTimeline() {
+				sel["_id"] = bson.M{"$gt": si.lastId}
+			}
+			si.iter = si.selQuery(sel).Sort(si.sortFields...).Iter()
 		} else {
 			si.iter = si.query().Iter()
 		}
 	}
 	b := make(bson.M)
 	if si.iter.Next(b) {
+		si.lastId = b["_id"].(bson.ObjectId)
 		s := reflect.New(si.typ).Interface()
 		si.r.bsonToStruct(b, s)
 		result, ok = s, true
@@ -801,6 +820,18 @@ func (si *selectorIter) timelineItemsPrev(next bson.ObjectId, n int, all bool) (
 	return
 }
 func (si *selectorIter) timelineItemsNext(next bson.ObjectId, n int, all bool) (ret []interface{}) {
+	ret = si._timelineItemsNext(next, n, all)
+	if si.pull && len(ret) == 0 {
+		//si.ctx.Close()
+		sel := si.copySel()
+		sel["$type"] = si.typ.Name()
+		si.r.mc.Wait(sel)
+		//si.ctx.reopen()
+		ret = si._timelineItemsNext(next, n, all)
+	}
+	return ret
+}
+func (si *selectorIter) _timelineItemsNext(next bson.ObjectId, n int, all bool) (ret []interface{}) {
 	ret = make([]interface{}, 0)
 	if n <= 0 {
 		return
@@ -1019,6 +1050,10 @@ func (si *selectorIter) sortedSelf() *ResId {
 	ret.Params.Del("c")
 	return ret
 }
+func (si *selectorIter) isAscTimeline() bool {
+	sf := si.sortFields
+	return len(sf) == 1 && sf[0] == "_id"
+}
 func (si *selectorIter) Slice() (slice Slice, err error) {
 	sf := si.sortFields
 	if len(sf) == 1 && (sf[0] == "_id" || sf[0] == "-_id") {
@@ -1036,6 +1071,8 @@ type rest struct {
 	queries map[string]*CustomResource
 	binds   map[string]map[string]*bind
 	hooks   map[hookKey]interface{}
+	mc      *mapCond
+	pull    map[string]bool
 }
 
 func (r *rest) NewContext() *Context {
@@ -2030,7 +2067,11 @@ func (h *fqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) 
 	} else {
 		sortFields := make([]string, 0)
 		if h.fq.SortFields == nil {
-			sortFields = append(sortFields, "-Id")
+			if !h.fq.Pull {
+				sortFields = append(sortFields, "-Id")
+			} else {
+				sortFields = append(sortFields, "Id")
+			}
 		} else {
 			sortFields = append(sortFields, h.fq.SortFields...)
 		}
@@ -2163,6 +2204,10 @@ func (h *fqHandler) Post(req *Req, ctx *Context) (result interface{}, err error)
 		} else {
 			panic(&Error{Code: InternalServerError, Err: err})
 		}
+	}
+	if h.r.pull[h.fq.Type] {
+		b["$type"] = h.fq.Type
+		h.r.mc.Broadcast(b)
 	}
 	return body, nil
 }
@@ -2410,6 +2455,9 @@ func checkFieldResource(fq *FieldResource) {
 func (r *rest) defFieldResource(name string, fq FieldResource) {
 	r.checkType(fq.Type)
 	checkFieldResource(&fq)
+	if fq.Pull {
+		r.pull[fq.Type] = true
+	}
 	h := newFQHandler(r, &fq)
 	h.ensureIndex()
 	segtype := r.fieldsToPathSegmentTypes(r.types[fq.Type], fq.Fields)
@@ -2814,7 +2862,6 @@ func (h *imageHandler) Get(req *Req, ctx *Context) (result interface{}, err erro
 	size, ok := req.Params["size"]
 	if ok {
 		bound, ok = h.iq.Bounds[size]
-		fmt.Println("bound:", bound)
 		if !ok {
 			return nil, &Error{
 				Code: BadRequest,

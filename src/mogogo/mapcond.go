@@ -102,6 +102,7 @@ func (mc *mapCond) removeId(id uint) {
 	defer mc.l.Unlock()
 	wl := mc.idToWaitList[id]
 	delete(wl, id)
+	delete(mc.idToWaitList, id)
 }
 func (mc *mapCond) Wait(cond map[string]interface{}) (timeout bool) {
 	id, w := mc.waitOn(cond)

@@ -1,8 +1,8 @@
 package mogogo
 
 import (
-	"time"
 	"testing"
+	"time"
 )
 
 func TestMapCond(t *testing.T) {
@@ -10,20 +10,20 @@ func TestMapCond(t *testing.T) {
 	mc.Timeout = 3 * time.Second
 	go func() {
 		time.Sleep(1)
-		m := map[string]interface{} {
-			"s":"hello",
-			"n":10,
-			"b":false,
+		m := map[string]interface{}{
+			"s": "hello",
+			"n": 10,
+			"b": false,
 			"f": 3.14,
-			"a": []string{"a","b"},
+			"a": []string{"a", "b"},
 		}
 		mc.Broadcast(m)
 
 	}()
-	m := map[string]interface{} {
-		"s":"hello",
-		"n":10,
-		"b":false,
+	m := map[string]interface{}{
+		"s": "hello",
+		"n": 10,
+		"b": false,
 	}
 	timeout := mc.Wait(m)
 	if timeout {

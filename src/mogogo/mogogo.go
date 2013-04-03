@@ -702,6 +702,18 @@ func (si *selectorIter) copySel() bson.M {
 	}
 	return ret
 }
+func (si *selectorIter) getLastId() (ret bson.ObjectId) {
+	var b bson.M
+	err := si.query().Select(bson.M{"_id": 1}).Sort("-_id").One(&b)
+	if err == nil {
+		ret = b["_id"].(bson.ObjectId)
+	} else if err == mgo.ErrNotFound {
+		ret = ""
+	} else {
+		panic(err)
+	}
+	return
+}
 func (si *selectorIter) selQuery(sel bson.M) *mgo.Query {
 	return si.ctx.coll(si.typ.Name()).Find(sel)
 }
@@ -820,6 +832,9 @@ func (si *selectorIter) timelineItemsPrev(next bson.ObjectId, n int, all bool) (
 	return
 }
 func (si *selectorIter) timelineItemsNext(next bson.ObjectId, n int, all bool) (ret []interface{}) {
+	if next == "" && si.lastId != "" {
+		next = si.lastId
+	}
 	ret = si._timelineItemsNext(next, n, all)
 	if si.pull && len(ret) == 0 {
 		si.ctx.Close()
@@ -920,6 +935,7 @@ func (si *selectorIter) timelinePrev(s *selectorSlice) *ResId {
 	ret := si.resId.Copy()
 	ret.Params.Del("prev")
 	ret.Params.Del("next")
+	ret.Params.Del("last")
 	prevId := getBase(reflect.ValueOf(s.items[0]).Elem()).id.Hex()
 	ret.Params.SetString("prev", prevId)
 	return ret
@@ -928,6 +944,7 @@ func (si *selectorIter) timelineNext(s *selectorSlice) *ResId {
 	ret := si.resId.Copy()
 	ret.Params.Del("prev")
 	ret.Params.Del("next")
+	ret.Params.Del("last")
 	nextId := getBase(reflect.ValueOf(s.items[len(s.items)-1]).Elem()).id.Hex()
 	ret.Params.SetString("next", nextId)
 	return ret
@@ -2075,7 +2092,7 @@ func (h *fqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) 
 		} else {
 			sortFields = append(sortFields, h.fq.SortFields...)
 		}
-		result, err = &selectorIter{
+		si := &selectorIter{
 			r:          h.r,
 			typ:        h.r.types[h.fq.Type],
 			sortFields: h.r.fieldsToKeys(h.r.types[h.fq.Type], sortFields),
@@ -2085,8 +2102,18 @@ func (h *fqHandler) Get(req *Req, ctx *Context) (result interface{}, err error) 
 			resId:      req.ResId,
 			ctx:        ctx,
 			sel:        q,
-		}, err
+		}
 
+		if si.pull {
+			last, err := parseParamBool(si.resId.Params, "last", false)
+			if err != nil {
+				return nil, err
+			}
+			if last {
+				si.lastId = si.getLastId()
+			}
+		}
+		result = si
 	}
 	return
 }

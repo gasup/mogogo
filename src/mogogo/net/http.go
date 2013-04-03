@@ -436,7 +436,6 @@ func (h *HTTPHandler) responseJSON(w http.ResponseWriter, req *http.Request, sta
 		w.WriteHeader(status)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "private, max-age=0")
 	w.Header().Set("Server", "MOGOGO/0.1")
 	buf, err := h.compress(w, req, m)
@@ -451,6 +450,7 @@ func (h *HTTPHandler) responseJSON(w http.ResponseWriter, req *http.Request, sta
 		status = 304
 		w.WriteHeader(status)
 	} else {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, err = buf.WriteTo(w)
 		if err != nil {
